@@ -48,15 +48,61 @@ app.get('/:room', (req, res) => {
   res.render('room', { roomId: req.params.room })
 })
 
+// Store connected users by room
+const rooms = {}
+
 io.on('connection', socket => {
-  socket.on('join-room', (roomId, userId) => {
+  let currentRoomId = null
+  let currentUserId = null
+
+  socket.on('join-room', (roomId, userId, userName = null) => {
     console.log(`User ${userId} joined room ${roomId}`)
+
+    // Store room and user info
+    currentRoomId = roomId
+    currentUserId = userId
+
+    // Initialize room if it doesn't exist
+    if (!rooms[roomId]) {
+      rooms[roomId] = {}
+    }
+
+    // Add user to room
+    rooms[roomId][userId] = {
+      id: userId,
+      name: userName || `User ${userId.substring(0, 8)}...`,
+      socketId: socket.id
+    }
+
+    // Join the socket room
     socket.join(roomId)
+
+    // Notify others that user connected
     socket.to(roomId).emit('user-connected', userId)
+
+    // Send updated user list to all clients in the room
+    io.to(roomId).emit('user-list-update', rooms[roomId])
 
     socket.on('disconnect', () => {
       console.log(`User ${userId} disconnected from room ${roomId}`)
+
+      // Remove user from room
+      if (rooms[roomId] && rooms[roomId][userId]) {
+        delete rooms[roomId][userId]
+
+        // Clean up empty rooms
+        if (Object.keys(rooms[roomId]).length === 0) {
+          delete rooms[roomId]
+        }
+      }
+
+      // Notify others that user disconnected
       socket.to(roomId).emit('user-disconnected', userId)
+
+      // Send updated user list
+      if (rooms[roomId]) {
+        io.to(roomId).emit('user-list-update', rooms[roomId])
+      }
     })
   })
 
@@ -65,6 +111,31 @@ io.on('connection', socket => {
     console.log(`User ${userId} requested force reconnect in room ${roomId}`)
     // Notify all other users in the room to reconnect to this user
     socket.to(roomId).emit('user-reconnect-request', userId)
+  })
+
+  // Handle group chat messages
+  socket.on('send-message', (messageData) => {
+    if (!currentRoomId) return
+
+    console.log(`Group message in room ${currentRoomId} from ${messageData.sender}`)
+
+    // Broadcast to everyone else in the room
+    socket.to(currentRoomId).emit('receive-message', messageData)
+  })
+
+  // Handle private messages
+  socket.on('send-private-message', (messageData) => {
+    if (!currentRoomId || !messageData.recipient) return
+
+    console.log(`Private message from ${messageData.sender} to ${messageData.recipient}`)
+
+    // Find the recipient's socket
+    const recipientData = rooms[currentRoomId] && rooms[currentRoomId][messageData.recipient]
+
+    if (recipientData) {
+      // Send only to the specific recipient
+      io.to(recipientData.socketId).emit('receive-private-message', messageData)
+    }
   })
 })
 
