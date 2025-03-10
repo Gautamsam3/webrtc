@@ -37,14 +37,19 @@ const { PeerServer } = require('peer')
 // Configure PeerServer - always integrate with Express for consistency
 let peerServer;
 try {
+  // Create a new ExpressPeerServer
   peerServer = PeerServer({
-    path: '/peerjs',
+    path: '/', // Use root path since we'll mount it at /peerjs
     proxied: true,
     debug: true,
     allow_discovery: true,
     server: server // Use the same server instance for both environments
   });
-  console.log('PeerServer integrated with main server');
+
+  // Mount the PeerServer at the /peerjs path
+  app.use('/peerjs', peerServer);
+
+  console.log('PeerServer integrated with main server at /peerjs path');
 } catch (err) {
   console.error('Failed to initialize PeerServer:', err.message);
   process.exit(1); // Exit if PeerServer fails to initialize as it's critical
