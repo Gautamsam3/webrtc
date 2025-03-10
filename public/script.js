@@ -40,7 +40,7 @@ const myPeer = new Peer(storedPeerId, {
   port: peerPort,
   path: window.location.hostname === 'localhost' ||
         window.location.hostname === '127.0.0.1' ?
-        '/' : '', // Use /peerjs path in production
+        '/' : '/', // Use /peerjs path in production
   secure: isSecure,
   debug: 3,
   config: {
