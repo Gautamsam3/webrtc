@@ -28,10 +28,15 @@ const sendMessageBtn = document.getElementById('send-message')
 // Check if we have a stored peer ID from a previous session
 const storedPeerId = sessionStorage.getItem('myPeerId')
 
+// Determine if we're in production (Render) or development
+const isProduction = window.location.hostname.includes('render.com');
+
+// Configure Peer connection based on environment
 const myPeer = new Peer(storedPeerId, {
   host: window.location.hostname,
-  port: '3002',
-  secure: true,  // Enable HTTPS
+  port: isProduction ? window.location.port : '3002',
+  path: isProduction ? '/peerjs' : '/',
+  secure: window.location.protocol === 'https:', // Use HTTPS if the page is loaded over HTTPS
   debug: 3,
   config: {
     iceServers: [
@@ -404,9 +409,10 @@ function disconnect() {
   // Notify the user
   updateStatus('Disconnected from the room')
 
-  // Redirect to Google after a short delay
+  // Redirect to home page after a short delay
   setTimeout(() => {
-    window.location.href = 'https://192.168.165.151:3000/'
+    // Use the current protocol and hostname instead of hardcoded values
+    window.location.href = `${window.location.protocol}//${window.location.host}/`
   }, 1500)
 }
 

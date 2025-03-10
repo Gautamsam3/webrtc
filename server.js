@@ -2,31 +2,70 @@ require('dotenv').config()
 const express = require('express')
 const app = express()
 const fs = require('fs')
-const https = require('https')
 const path = require('path')
+const http = require('http')
+const https = require('https')
 
-// SSL certificates for HTTPS
-const options = {
-  key: fs.readFileSync('ssl/key.pem'),
-  cert: fs.readFileSync('ssl/cert.pem')
+// Determine if we're in production (Render) or development
+const isProduction = process.env.NODE_ENV === 'production' || !!process.env.RENDER
+
+// Create appropriate server based on environment
+let server;
+if (isProduction) {
+  // In production (Render), use HTTP server as Render handles SSL
+  server = http.createServer(app)
+  console.log('Running in production mode with HTTP server (Render handles SSL)')
+} else {
+  // In development, use HTTPS with local certificates
+  try {
+    const options = {
+      key: fs.readFileSync('ssl/key.pem'),
+      cert: fs.readFileSync('ssl/cert.pem')
+    }
+    server = https.createServer(options, app)
+    console.log('Running in development mode with local HTTPS server')
+  } catch (err) {
+    console.error('Failed to load SSL certificates, falling back to HTTP:', err.message)
+    server = http.createServer(app)
+  }
 }
 
-// Create HTTPS server
-const server = https.createServer(options, app)
 const io = require('socket.io')(server)
 const { v4: uuidV4 } = require('uuid')
 const { PeerServer } = require('peer')
 
-// Create a separate PeerServer with better error handling and HTTPS
-const peerServer = PeerServer({
-  port: 3002,
-  path: '/',
-  proxied: true, // Ye proxy issue fix karega
-  ssl: {
-    key: fs.readFileSync('ssl/key.pem'),
-    cert: fs.readFileSync('ssl/cert.pem')
+// Configure PeerServer based on environment
+let peerServer;
+if (isProduction) {
+  // In production, use HTTP for PeerServer and let Render handle SSL
+  peerServer = PeerServer({
+    port: process.env.PORT || 3002,
+    path: '/peerjs',
+    proxied: true
+  })
+  console.log('PeerServer running in production mode')
+} else {
+  // In development, use HTTPS with local certificates
+  try {
+    peerServer = PeerServer({
+      port: 3002,
+      path: '/',
+      proxied: true,
+      ssl: {
+        key: fs.readFileSync('ssl/key.pem'),
+        cert: fs.readFileSync('ssl/cert.pem')
+      }
+    })
+    console.log('PeerServer running in development mode with HTTPS')
+  } catch (err) {
+    console.error('Failed to load SSL certificates for PeerServer:', err.message)
+    peerServer = PeerServer({
+      port: 3002,
+      path: '/',
+      proxied: true
+    })
   }
-})
+}
 
 peerServer.on('connection', (client) => {
   console.log('PeerJS client connected:', client.getId())
@@ -186,8 +225,8 @@ io.on('connection', socket => {
 })
 
 const PORT = process.env.PORT || 3000 // Dynamic port handling
-server.listen(PORT, () => {
-  console.log(`HTTPS Server running on port ${PORT}`)
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server running on port ${PORT}`)
   const IP = process.env.RENDER_EXTERNAL_URL || 'localhost'
-  console.log(`To connect from another device, use: ${IP}:${PORT}`)
+  console.log(`To connect from another device, use: ${IP}`)
 })
