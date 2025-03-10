@@ -3,13 +3,22 @@ const socket = io('/', {
   transports: ['websocket', 'polling'], // Allow fallback to polling if WebSocket fails
   upgrade: true, // Allow transport upgrades
   reconnectionDelay: 1000, // Faster reconnection
-  reconnectionAttempts: 20, // More reconnection attempts
-  timeout: 20000, // Longer timeout for more reliable connections
+  reconnectionAttempts: Infinity, // Unlimited reconnection attempts
+  timeout: 30000, // Longer timeout for more reliable connections
   reconnection: true, // Enable automatic reconnection
   reconnectionDelayMax: 5000, // Maximum delay between reconnection attempts
   randomizationFactor: 0.5, // Add some randomization to the reconnection delay
-  autoConnect: true // Connect automatically
+  autoConnect: true, // Connect automatically
+  forceNew: false, // Reuse existing connection if possible
+  multiplex: true // Allow multiple connections to the same endpoint
 })
+
+// Add a heartbeat to detect disconnections early
+setInterval(() => {
+  if (socket.connected) {
+    socket.emit('heartbeat');
+  }
+}, 10000);
 
 // Add socket.io connection event handlers for better debugging and reliability
 socket.on('connect', () => {
@@ -90,64 +99,73 @@ const storedPeerId = sessionStorage.getItem('myPeerId')
 const isProduction = window.location.hostname.includes('render.com') ||
                      window.location.hostname === 'rexmeet.onrender.com';
 
-// Configure Peer connection - consistent with server configuration
-const myPeer = new Peer(storedPeerId, {
-  host: window.location.hostname,
-  port: window.location.port || (window.location.protocol === 'https:' ? 443 : 80),
-  path: '/peerjs', // Always use /peerjs path for consistency with server
-  secure: window.location.protocol === 'https:', // Use HTTPS if the page is loaded over HTTPS
-  debug: 3,
-  pingInterval: 5000, // Ping more frequently to detect connection issues earlier
-  reconnectTimer: 1000, // Faster reconnection attempts
-  config: {
-    iceServers: [
-      // STUN servers - multiple options for better connectivity
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun2.l.google.com:19302' },
-      { urls: 'stun:stun3.l.google.com:19302' },
-      { urls: 'stun:stun4.l.google.com:19302' },
-      // Free TURN servers (multiple options with different transports)
-      {
-        urls: 'turn:openrelay.metered.ca:80',
-        username: 'openrelayproject',
-        credential: 'openrelayproject'
-      },
-      {
-        urls: 'turn:openrelay.metered.ca:443',
-        username: 'openrelayproject',
-        credential: 'openrelayproject'
-      },
-      {
-        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-        username: 'openrelayproject',
-        credential: 'openrelayproject'
-      },
-      // Additional TURN servers for better connectivity
-      {
-        urls: 'turn:relay.metered.ca:80',
-        username: 'e8c5847a6c5e31e3f988751a',
-        credential: 'OBMhFfXVcHZWGkgO'
-      },
-      {
-        urls: 'turn:relay.metered.ca:443',
-        username: 'e8c5847a6c5e31e3f988751a',
-        credential: 'OBMhFfXVcHZWGkgO'
-      },
-      {
-        urls: 'turn:relay.metered.ca:443?transport=tcp',
-        username: 'e8c5847a6c5e31e3f988751a',
-        credential: 'OBMhFfXVcHZWGkgO'
-      }
-    ],
-    iceTransportPolicy: 'all', // Try direct connections first, fall back to TURN servers
-    sdpSemantics: 'unified-plan',
-    // Optimize for better connectivity rather than just low latency
-    iceCandidatePoolSize: 10, // Increase candidate gathering speed
-    bundlePolicy: 'max-bundle', // Bundle all media tracks
-    rtcpMuxPolicy: 'require' // Require RTCP multiplexing
-  }
-})
+// Function to create a new PeerJS instance with optimized settings
+function createPeer(peerId) {
+  // Try to use a more reliable configuration
+  return new Peer(peerId, {
+    host: window.location.hostname,
+    port: window.location.port || (window.location.protocol === 'https:' ? 443 : 80),
+    path: '/peerjs', // Always use /peerjs path for consistency with server
+    secure: window.location.protocol === 'https:', // Use HTTPS if the page is loaded over HTTPS
+    debug: 3,
+    pingInterval: 3000, // Ping even more frequently to detect connection issues earlier
+    reconnectTimer: 1000, // Faster reconnection attempts
+    retryTimers: [1000, 2000, 4000, 8000], // Progressive backoff for retries
+    config: {
+      iceServers: [
+        // STUN servers - multiple options for better connectivity
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+        { urls: 'stun:stun3.l.google.com:19302' },
+        { urls: 'stun:stun4.l.google.com:19302' },
+        // Free TURN servers (multiple options with different transports)
+        {
+          urls: 'turn:openrelay.metered.ca:80',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        },
+        {
+          urls: 'turn:openrelay.metered.ca:443',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        },
+        {
+          urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        },
+        // Additional TURN servers for better connectivity
+        {
+          urls: 'turn:relay.metered.ca:80',
+          username: 'e8c5847a6c5e31e3f988751a',
+          credential: 'OBMhFfXVcHZWGkgO'
+        },
+        {
+          urls: 'turn:relay.metered.ca:443',
+          username: 'e8c5847a6c5e31e3f988751a',
+          credential: 'OBMhFfXVcHZWGkgO'
+        },
+        {
+          urls: 'turn:relay.metered.ca:443?transport=tcp',
+          username: 'e8c5847a6c5e31e3f988751a',
+          credential: 'OBMhFfXVcHZWGkgO'
+        }
+      ],
+      iceTransportPolicy: 'all', // Try direct connections first, fall back to TURN servers
+      sdpSemantics: 'unified-plan',
+      // Optimize for better connectivity rather than just low latency
+      iceCandidatePoolSize: 10, // Increase candidate gathering speed
+      bundlePolicy: 'max-bundle', // Bundle all media tracks
+      rtcpMuxPolicy: 'require', // Require RTCP multiplexing
+      iceServersTransportPolicy: 'all', // Try all transport policies
+      iceTransportPolicyRelay: false // Don't force relay initially
+    }
+  });
+}
+
+// Initialize the peer connection
+let myPeer = createPeer(storedPeerId);
 
 // Configure WebRTC peer connection options for lower latency
 myPeer.on('call', call => {
@@ -219,22 +237,26 @@ myPeer.on('error', (err) => {
 
   let errorMessage = `PeerJS error: ${err.type}`;
   let shouldAttemptReconnect = true;
+  let reconnectDelay = 3000; // Default reconnect delay
 
   // Provide more specific error messages based on error type
   switch(err.type) {
     case 'peer-unavailable':
       errorMessage = `Connection failed: The peer you're trying to connect to is not available. They may have left the room or have connection issues.`;
+      reconnectDelay = 2000;
       break;
     case 'network':
       errorMessage = `Network error: Connection to the signaling server was lost. Attempting to reconnect...`;
       // Try switching to a different ICE transport policy if we're having network issues
-      if (myPeer.options.config.iceTransportPolicy === 'all') {
+      if (myPeer.options && myPeer.options.config && myPeer.options.config.iceTransportPolicy === 'all') {
         console.log('Switching to relay-only ICE policy for more reliable connections');
         myPeer.options.config.iceTransportPolicy = 'relay';
       }
+      reconnectDelay = 2000;
       break;
     case 'server-error':
       errorMessage = `Server error: The signaling server is experiencing issues. Attempting to reconnect...`;
+      reconnectDelay = 4000; // Wait a bit longer for server errors
       break;
     case 'browser-incompatible':
       errorMessage = `Your browser may not fully support WebRTC. Please try using Chrome, Firefox, or Edge.`;
@@ -242,31 +264,36 @@ myPeer.on('error', (err) => {
       break;
     case 'disconnected':
       errorMessage = `Disconnected from signaling server. Attempting to reconnect...`;
+      reconnectDelay = 1500;
       break;
     case 'socket-error':
       errorMessage = `Socket connection error. Attempting to reconnect...`;
+      reconnectDelay = 2000;
       break;
     case 'socket-closed':
       errorMessage = `Socket connection closed. Attempting to reconnect...`;
+      reconnectDelay = 2000;
       break;
     case 'unavailable-id':
       errorMessage = `The ID ${myPeerId} is already taken. Generating a new ID...`;
       // Clear the stored peer ID so we get a new one
       sessionStorage.removeItem('myPeerId');
+      reconnectDelay = 1000;
       break;
     default:
       errorMessage = `Connection error (${err.type}). Attempting to reconnect...`;
+      reconnectDelay = 3000;
   }
 
   updateStatus(errorMessage, true);
 
   // Attempt to reconnect for most error types
   if (shouldAttemptReconnect) {
-    console.log(`Scheduling reconnection attempt in 5 seconds due to ${err.type} error`);
+    console.log(`Scheduling reconnection attempt in ${reconnectDelay/1000} seconds due to ${err.type} error`);
 
     // Wait a bit before trying to reconnect
     setTimeout(() => {
-      if (myPeerId && ROOM_ID) {
+      if (ROOM_ID) {
         console.log('Attempting automatic reconnection after PeerJS error');
 
         // For network-related errors, try a full reconnection
@@ -277,15 +304,20 @@ myPeer.on('error', (err) => {
           // Destroy the current peer connection
           if (myPeer) {
             console.log('Destroying current peer connection');
-            myPeer.destroy();
+            try {
+              myPeer.destroy();
+            } catch (e) {
+              console.error('Error destroying peer:', e);
+              // Continue anyway
+            }
           }
 
           // Create a new peer with the same ID (or a new one if unavailable-id)
           console.log('Creating new peer connection');
           const newPeerId = err.type === 'unavailable-id' ? undefined : myPeerId;
 
-          // Recreate the peer with the same options
-          myPeer = new Peer(newPeerId, myPeer.options);
+          // Recreate the peer with optimized settings
+          myPeer = createPeer(newPeerId);
 
           // Set up all the event handlers again
           setupPeerEventHandlers();
@@ -296,24 +328,58 @@ myPeer.on('error', (err) => {
           forceReconnect();
         }
       }
-    }, 5000);
+    }, reconnectDelay);
   }
 })
 
 // Function to set up all peer event handlers
 function setupPeerEventHandlers() {
+  // Track reconnection attempts to prevent infinite loops
+  let reconnectionAttempts = 0;
+  const MAX_RECONNECTION_ATTEMPTS = 5;
+
   // Re-add the error handler
   myPeer.on('error', (err) => {
     console.error('PeerJS error in new connection:', err);
-    // We don't want to create an infinite loop of error handling,
-    // so we'll just log this error but not try to reconnect again immediately
-    updateStatus(`Connection error: ${err.type}. Please try refreshing the page if issues persist.`, true);
+
+    // Only try to reconnect a limited number of times to prevent infinite loops
+    if (reconnectionAttempts < MAX_RECONNECTION_ATTEMPTS) {
+      reconnectionAttempts++;
+      console.log(`Reconnection attempt ${reconnectionAttempts}/${MAX_RECONNECTION_ATTEMPTS}`);
+
+      // For critical errors, try a more aggressive approach
+      if (err.type === 'network' || err.type === 'server-error') {
+        setTimeout(() => {
+          console.log('Attempting to recreate peer connection after critical error');
+          try {
+            myPeer.destroy();
+          } catch (e) {
+            console.error('Error destroying peer:', e);
+          }
+
+          // Try with a completely new peer ID to avoid conflicts
+          sessionStorage.removeItem('myPeerId');
+          myPeer = createPeer();
+
+          // Set up event handlers again, but with a clean reconnection counter
+          setupPeerEventHandlers();
+        }, 3000);
+      } else {
+        updateStatus(`Connection error: ${err.type}. Attempting to reconnect...`, true);
+      }
+    } else {
+      // We've tried too many times, suggest manual refresh
+      updateStatus(`Connection error: ${err.type}. Please try refreshing the page.`, true);
+    }
   });
 
   // Re-add the open handler
   myPeer.on('open', id => {
     console.log('PeerJS connection successful! My peer ID is:', id);
     myPeerId = id;
+
+    // Reset reconnection attempts counter on successful connection
+    reconnectionAttempts = 0;
 
     // Store the peer ID for session persistence
     sessionStorage.setItem('myPeerId', id);
@@ -328,7 +394,17 @@ function setupPeerEventHandlers() {
     });
 
     updateStatus('Connected to signaling server');
-    socket.emit('join-room', ROOM_ID, id, myName);
+
+    // Make sure we're connected to socket.io before joining the room
+    if (socket.connected) {
+      socket.emit('join-room', ROOM_ID, id, myName);
+    } else {
+      console.log('Socket not connected, waiting for connection before joining room');
+      socket.once('connect', () => {
+        console.log('Socket connected, now joining room');
+        socket.emit('join-room', ROOM_ID, id, myName);
+      });
+    }
   });
 
   // Re-add the connection handler
