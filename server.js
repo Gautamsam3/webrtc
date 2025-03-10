@@ -53,12 +53,12 @@ try {
 // Add more detailed PeerJS server logging
 peerServer.on('connection', (client) => {
   console.log('PeerJS client connected:', client.getId());
-  console.log('Total PeerJS connections:', peerServer._clients.size);
+  console.log('Total PeerJS connections:', peerServer._clients ? peerServer._clients.size : 'N/A');
 });
 
 peerServer.on('disconnect', (client) => {
   console.log('PeerJS client disconnected:', client.getId());
-  console.log('Remaining PeerJS connections:', peerServer._clients.size);
+  console.log('Remaining PeerJS connections:', peerServer._clients ? peerServer._clients.size : 'N/A');
 });
 
 // Log errors from the PeerServer
@@ -68,7 +68,7 @@ peerServer.on('error', (error) => {
 
 // Add a heartbeat to check PeerServer status
 setInterval(() => {
-  console.log('PeerServer status check - Active connections:', peerServer._clients.size);
+  console.log('PeerServer status check - Active connections:', peerServer._clients ? peerServer._clients.size : 'N/A');
   console.log('Active rooms:', Object.keys(rooms).length);
 
   // Log details of each room
