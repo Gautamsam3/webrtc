@@ -34,54 +34,49 @@ const io = require('socket.io')(server)
 const { v4: uuidV4 } = require('uuid')
 const { PeerServer } = require('peer')
 
-// Configure PeerServer based on environment
+// Configure PeerServer - always integrate with Express for consistency
 let peerServer;
-if (isProduction) {
-  // In production, integrate PeerServer with Express app
+try {
   peerServer = PeerServer({
     path: '/peerjs',
     proxied: true,
-    port: 443, // This is ignored when using the Express integration
-    server: server, // Use the same server instance
     debug: true,
-    allow_discovery: true
+    allow_discovery: true,
+    server: server // Use the same server instance for both environments
   });
-  console.log('PeerServer integrated with main server in production mode');
-} else {
-  // In development, use a separate server with HTTPS
-  try {
-    peerServer = PeerServer({
-      port: 3002,
-      path: '/',
-      proxied: true,
-      debug: true,
-      allow_discovery: true,
-      ssl: {
-        key: fs.readFileSync('ssl/key.pem'),
-        cert: fs.readFileSync('ssl/cert.pem')
-      }
-    });
-    console.log('PeerServer running in development mode with HTTPS on port 3002');
-  } catch (err) {
-    console.error('Failed to load SSL certificates for PeerServer:', err.message);
-    peerServer = PeerServer({
-      port: 3002,
-      path: '/',
-      proxied: true,
-      debug: true,
-      allow_discovery: true
-    });
-    console.log('PeerServer running in development mode on port 3002');
-  }
+  console.log('PeerServer integrated with main server');
+} catch (err) {
+  console.error('Failed to initialize PeerServer:', err.message);
+  process.exit(1); // Exit if PeerServer fails to initialize as it's critical
 }
 
+// Add more detailed PeerJS server logging
 peerServer.on('connection', (client) => {
   console.log('PeerJS client connected:', client.getId());
+  console.log('Total PeerJS connections:', peerServer._clients.size);
 });
 
 peerServer.on('disconnect', (client) => {
   console.log('PeerJS client disconnected:', client.getId());
+  console.log('Remaining PeerJS connections:', peerServer._clients.size);
 });
+
+// Log errors from the PeerServer
+peerServer.on('error', (error) => {
+  console.error('PeerServer error:', error);
+});
+
+// Add a heartbeat to check PeerServer status
+setInterval(() => {
+  console.log('PeerServer status check - Active connections:', peerServer._clients.size);
+  console.log('Active rooms:', Object.keys(rooms).length);
+
+  // Log details of each room
+  Object.keys(rooms).forEach(roomId => {
+    const userCount = Object.keys(rooms[roomId]).length;
+    console.log(`Room ${roomId}: ${userCount} users`);
+  });
+}, 30000); // Check every 30 seconds
 
 app.set('view engine', 'ejs')
 app.use(express.static(path.join(__dirname, 'public')))

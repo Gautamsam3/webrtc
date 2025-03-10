@@ -90,11 +90,11 @@ const storedPeerId = sessionStorage.getItem('myPeerId')
 const isProduction = window.location.hostname.includes('render.com') ||
                      window.location.hostname === 'rexmeet.onrender.com';
 
-// Configure Peer connection based on environment
+// Configure Peer connection - consistent with server configuration
 const myPeer = new Peer(storedPeerId, {
   host: window.location.hostname,
-  port: isProduction ? '' : '3002', // Empty string for production as port is handled by proxy
-  path: isProduction ? '/peerjs' : '/',
+  port: window.location.port || (window.location.protocol === 'https:' ? 443 : 80),
+  path: '/peerjs', // Always use /peerjs path for consistency with server
   secure: window.location.protocol === 'https:', // Use HTTPS if the page is loaded over HTTPS
   debug: 3,
   config: {
@@ -1021,15 +1021,64 @@ socket.on('user-list-update', users => {
   updateVideoGridLayout()
 })
 
+// Add more detailed PeerJS connection logging
 myPeer.on('open', id => {
-  console.log('My peer ID is:', id)
+  console.log('PeerJS connection successful! My peer ID is:', id)
   myPeerId = id
 
   // Store the peer ID for session persistence
   sessionStorage.setItem('myPeerId', id)
 
+  // Log connection details
+  console.log('PeerJS connection details:', {
+    host: myPeer.options.host,
+    port: myPeer.options.port,
+    path: myPeer.options.path,
+    secure: myPeer.options.secure,
+    iceTransportPolicy: myPeer.options.config.iceTransportPolicy
+  })
+
   updateStatus('Connected to signaling server')
   socket.emit('join-room', ROOM_ID, id, myName)
+})
+
+// Add additional connection event handlers for better debugging
+myPeer.on('connection', (conn) => {
+  console.log('Incoming peer data connection:', conn.peer)
+
+  conn.on('open', () => {
+    console.log('Peer data connection opened with:', conn.peer)
+  })
+
+  // Handle data messages from peers
+  conn.on('data', (data) => {
+    console.log('Received data from peer:', data);
+
+    // Handle ready-for-call message
+    if (data.type === 'ready-for-call') {
+      console.log(`Peer ${conn.peer} is ready for call`);
+
+      // If we're not already connected to this peer and we have a stream, initiate a call
+      if (!peers[conn.peer] && myStream) {
+        console.log(`Initiating call to ${conn.peer} after receiving ready signal`);
+
+        // Small delay to ensure both sides are ready
+        setTimeout(() => {
+          const call = myPeer.call(conn.peer, myStream);
+
+          // Store the call in peers
+          if (call) {
+            peers[conn.peer] = call;
+            console.log(`Call initiated to ${conn.peer}`);
+          }
+        }, 500);
+      }
+    }
+  });
+
+  conn.on('error', (err) => {
+    console.error('Peer data connection error with ' + conn.peer + ':', err)
+  })
 })
 
 // Handle page refresh/unload
@@ -1144,6 +1193,25 @@ function connectToNewUser(userId, stream) {
 }
 
 function initiateConnection(userId, stream) {
+  console.log(`Initiating connection to user ${userId}`)
+
+  // First establish a data connection to help with signaling
+  const dataConnection = myPeer.connect(userId, {
+    reliable: true,
+    serialization: 'json'
+  });
+
+  dataConnection.on('open', () => {
+    console.log(`Data connection established with ${userId}, now initiating media call`);
+    dataConnection.send({
+      type: 'ready-for-call',
+      sender: myPeerId
+    });
+  });
+
+  dataConnection.on('error', (err) => {
+    console.error(`Data connection error with ${userId}:`, err);
+  });
 
   // Create video element in advance to reduce rendering delay
   const video = document.createElement('video')
