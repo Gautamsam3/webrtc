@@ -3,8 +3,65 @@ const socket = io('/', {
   transports: ['websocket', 'polling'], // Allow fallback to polling if WebSocket fails
   upgrade: true, // Allow transport upgrades
   reconnectionDelay: 1000, // Faster reconnection
-  reconnectionAttempts: 10, // More reconnection attempts
-  timeout: 10000 // Shorter timeout
+  reconnectionAttempts: 20, // More reconnection attempts
+  timeout: 20000, // Longer timeout for more reliable connections
+  reconnection: true, // Enable automatic reconnection
+  reconnectionDelayMax: 5000, // Maximum delay between reconnection attempts
+  randomizationFactor: 0.5, // Add some randomization to the reconnection delay
+  autoConnect: true // Connect automatically
+})
+
+// Add socket.io connection event handlers for better debugging and reliability
+socket.on('connect', () => {
+  console.log('Socket.io connected with ID:', socket.id)
+  updateStatus('Connected to signaling server')
+
+  // If we already have a peer ID and room ID, rejoin the room
+  if (myPeerId && typeof ROOM_ID !== 'undefined') {
+    console.log('Rejoining room after socket reconnection')
+    socket.emit('join-room', ROOM_ID, myPeerId, myName)
+  }
+})
+
+socket.on('connect_error', (error) => {
+  console.error('Socket.io connection error:', error)
+  updateStatus('Connection error. Attempting to reconnect...', true)
+})
+
+socket.on('disconnect', (reason) => {
+  console.log('Socket.io disconnected. Reason:', reason)
+  updateStatus('Disconnected from signaling server. Reconnecting...', true)
+
+  // If the disconnect was due to a server disconnect, try to reconnect
+  if (reason === 'io server disconnect') {
+    socket.connect()
+  }
+})
+
+socket.on('reconnect', (attemptNumber) => {
+  console.log('Socket.io reconnected after', attemptNumber, 'attempts')
+  updateStatus('Reconnected to signaling server')
+
+  // Rejoin the room after reconnection
+  if (myPeerId && typeof ROOM_ID !== 'undefined') {
+    console.log('Rejoining room after socket reconnection')
+    socket.emit('join-room', ROOM_ID, myPeerId, myName)
+  }
+})
+
+socket.on('reconnect_attempt', (attemptNumber) => {
+  console.log('Socket.io reconnection attempt:', attemptNumber)
+  updateStatus(`Reconnection attempt ${attemptNumber}...`)
+})
+
+socket.on('reconnect_error', (error) => {
+  console.error('Socket.io reconnection error:', error)
+  updateStatus('Error reconnecting. Will try again...', true)
+})
+
+socket.on('reconnect_failed', () => {
+  console.error('Socket.io failed to reconnect')
+  updateStatus('Failed to reconnect to server. Please refresh the page.', true)
 })
 const videoGrid = document.getElementById('video-grid')
 const statusMessage = document.getElementById('status-message')
@@ -30,22 +87,25 @@ const sendMessageBtn = document.getElementById('send-message')
 const storedPeerId = sessionStorage.getItem('myPeerId')
 
 // Determine if we're in production (Render) or development
-const isProduction = window.location.hostname.includes('render.com');
+const isProduction = window.location.hostname.includes('render.com') ||
+                     window.location.hostname === 'rexmeet.onrender.com';
 
 // Configure Peer connection based on environment
 const myPeer = new Peer(storedPeerId, {
   host: window.location.hostname,
-  port: isProduction ? window.location.port : '3002',
+  port: isProduction ? '' : '3002', // Empty string for production as port is handled by proxy
   path: isProduction ? '/peerjs' : '/',
   secure: window.location.protocol === 'https:', // Use HTTPS if the page is loaded over HTTPS
   debug: 3,
   config: {
     iceServers: [
-      // STUN servers
+      // STUN servers - multiple options for better connectivity
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
       { urls: 'stun:stun2.l.google.com:19302' },
-      // Free TURN servers (limited capacity but good for testing)
+      { urls: 'stun:stun3.l.google.com:19302' },
+      { urls: 'stun:stun4.l.google.com:19302' },
+      // Free TURN servers (multiple options with different transports)
       {
         urls: 'turn:openrelay.metered.ca:80',
         username: 'openrelayproject',
@@ -60,11 +120,27 @@ const myPeer = new Peer(storedPeerId, {
         urls: 'turn:openrelay.metered.ca:443?transport=tcp',
         username: 'openrelayproject',
         credential: 'openrelayproject'
+      },
+      // Additional TURN servers for better connectivity
+      {
+        urls: 'turn:relay.metered.ca:80',
+        username: 'e8c5847a6c5e31e3f988751a',
+        credential: 'OBMhFfXVcHZWGkgO'
+      },
+      {
+        urls: 'turn:relay.metered.ca:443',
+        username: 'e8c5847a6c5e31e3f988751a',
+        credential: 'OBMhFfXVcHZWGkgO'
+      },
+      {
+        urls: 'turn:relay.metered.ca:443?transport=tcp',
+        username: 'e8c5847a6c5e31e3f988751a',
+        credential: 'OBMhFfXVcHZWGkgO'
       }
     ],
     iceTransportPolicy: 'all',
     sdpSemantics: 'unified-plan',
-    // Optimize for lower latency
+    // Optimize for better connectivity rather than just low latency
     iceCandidatePoolSize: 10, // Increase candidate gathering speed
     bundlePolicy: 'max-bundle', // Bundle all media tracks
     rtcpMuxPolicy: 'require' // Require RTCP multiplexing
@@ -945,6 +1021,94 @@ window.addEventListener('beforeunload', () => {
   // so it can be reused when the page refreshes
 })
 
+// Set up ping/pong with server to maintain connection and detect network issues
+function setupPingPong() {
+  let pingInterval
+  let missedPongs = 0
+  const MAX_MISSED_PONGS = 3
+
+  function startPinging() {
+    // Clear any existing interval
+    if (pingInterval) {
+      clearInterval(pingInterval)
+    }
+
+    // Reset missed pongs counter
+    missedPongs = 0
+
+    // Start sending pings every 15 seconds
+    pingInterval = setInterval(() => {
+      if (socket.connected && myPeerId && ROOM_ID) {
+        console.log('Sending ping to server')
+
+        // Track if we get a pong back
+        let pongReceived = false
+
+        // Send ping with user and room info
+        socket.emit('ping-server', {
+          userId: myPeerId,
+          roomId: ROOM_ID,
+          timestamp: Date.now()
+        })
+
+        // Set a timeout to check if we got a pong back
+        setTimeout(() => {
+          if (!pongReceived) {
+            console.warn('No pong received from server')
+            missedPongs++
+
+            if (missedPongs >= MAX_MISSED_PONGS) {
+              console.error(`Missed ${MAX_MISSED_PONGS} pongs, connection may be unstable`)
+              updateStatus('Connection unstable. Attempting to reconnect...', true)
+
+              // Try to reconnect
+              forceReconnect()
+
+              // Reset the counter
+              missedPongs = 0
+            }
+          }
+        }, 5000) // Wait 5 seconds for a pong
+
+        // Listen for pong response
+        socket.once('pong-server', (data) => {
+          pongReceived = true
+          const latency = Date.now() - data.timestamp
+          console.log(`Received pong from server, latency: ${latency}ms`)
+
+          // If latency is very high, show a warning
+          if (latency > 1000) {
+            console.warn(`High latency detected: ${latency}ms`)
+            updateStatus(`High latency detected: ${latency}ms`, true)
+          }
+        })
+      }
+    }, 15000) // Ping every 15 seconds
+  }
+
+  // Start pinging when socket connects
+  socket.on('connect', () => {
+    console.log('Socket connected, starting ping/pong')
+    startPinging()
+  })
+
+  // Stop pinging when socket disconnects
+  socket.on('disconnect', () => {
+    console.log('Socket disconnected, stopping ping/pong')
+    if (pingInterval) {
+      clearInterval(pingInterval)
+    }
+  })
+
+  // Start pinging immediately if socket is already connected
+  if (socket.connected) {
+    startPinging()
+  }
+}
+
+// Start the ping/pong mechanism
+setupPingPong()
+
 function connectToNewUser(userId, stream) {
   console.log('Connecting to new user:', userId)
 
@@ -952,6 +1116,7 @@ function connectToNewUser(userId, stream) {
   if (peers[userId]) {
     console.log('Already connected to this user, closing previous connection')
     peers[userId].close()
+    delete peers[userId]
   }
 
   // Create video element in advance to reduce rendering delay
@@ -979,62 +1144,225 @@ function connectToNewUser(userId, stream) {
   // Add the container to the grid immediately to show connection is in progress
   videoGrid.appendChild(container)
 
-  // Make the call with optimized options
-  const call = myPeer.call(userId, stream)
+  // Set a connection timeout
+  const connectionTimeout = setTimeout(() => {
+    console.log(`Connection to ${userId} timed out, retrying...`)
 
-  // Set up event handlers
-  call.on('stream', userVideoStream => {
-    console.log('Received stream from user:', userId)
-    console.log('Stream tracks:', userVideoStream.getTracks().map(track => `${track.kind}: ${track.label} (${track.readyState})`))
+    // If we still have a connecting container, it means the connection didn't complete
+    const connectingContainer = document.getElementById(`container-${userId}`)
+    if (connectingContainer && connectingContainer.classList.contains('connecting')) {
+      // Remove the old container
+      connectingContainer.remove()
+
+      // If we have a call in the peers object, close it
+      if (peers[userId]) {
+        peers[userId].close()
+        delete peers[userId]
+      }
+
+      // Try to connect again after a short delay
+      setTimeout(() => {
+        console.log(`Retrying connection to ${userId}`)
+        connectToNewUser(userId, stream)
+      }, 2000)
+    }
+  }, 15000) // 15 second timeout
+
+  try {
+    // Make the call with optimized options
+    const call = myPeer.call(userId, stream)
+
+    // Set up event handlers
+    call.on('stream', userVideoStream => {
+      // Clear the timeout since we got a stream
+      clearTimeout(connectionTimeout)
+
+      console.log('Received stream from user:', userId)
+      console.log('Stream tracks:', userVideoStream.getTracks().map(track => `${track.kind}: ${track.label} (${track.readyState})`))
+
+      // Remove the placeholder container
+      const connectingContainer = document.getElementById(`container-${userId}`)
+      if (connectingContainer) {
+        connectingContainer.remove()
+      }
+
+      // Add the actual video stream
+      addVideoStream(video, userVideoStream, userId)
+      updateStatus(`Connected with user: ${userId.substring(0, 8)}...`)
+
+      // Optimize the peer connection if possible
+      if (call.peerConnection) {
+        // Monitor this specific connection
+        monitorSpecificConnection(call.peerConnection, userId)
+
+        // Set high priority for audio
+        call.peerConnection.getSenders().forEach(sender => {
+          if (sender.track && sender.track.kind === 'audio') {
+            const params = sender.getParameters();
+            if (params.encodings) {
+              params.encodings.forEach(encoding => {
+                encoding.priority = 'high';
+                encoding.networkPriority = 'high';
+              });
+              sender.setParameters(params).catch(e => console.error('Error setting priority:', e));
+            }
+          }
+        });
+
+        // Start network quality monitoring when we have an active connection
+        startNetworkMonitoring();
+      }
+    })
+
+    call.on('error', err => {
+      // Clear the timeout since we got an error
+      clearTimeout(connectionTimeout)
+
+      console.error('Call error:', err)
+      updateStatus(`Error connecting to user: ${err.message}. Retrying...`, true)
+
+      // Remove the placeholder on error
+      const placeholderContainer = document.getElementById(`container-${userId}`)
+      if (placeholderContainer) {
+        placeholderContainer.remove()
+      }
+
+      // Remove from peers
+      delete peers[userId]
+
+      // Try to reconnect after a short delay
+      setTimeout(() => {
+        console.log(`Retrying connection to ${userId} after error`)
+        connectToNewUser(userId, stream)
+      }, 3000)
+    })
+
+    call.on('close', () => {
+      // Clear the timeout since the call was closed
+      clearTimeout(connectionTimeout)
+
+      console.log('Call closed for user:', userId)
+      const container = document.getElementById(`container-${userId}`)
+      if (container) {
+        container.remove()
+      }
+
+      // Remove from peers
+      delete peers[userId]
+    })
+
+    // Store the call in peers
+    peers[userId] = call
+
+    // Add ice connection state change listener
+    if (call.peerConnection) {
+      call.peerConnection.addEventListener('iceconnectionstatechange', () => {
+        const state = call.peerConnection.iceConnectionState
+        console.log(`ICE connection state with ${userId}: ${state}`)
+
+        if (state === 'failed' || state === 'disconnected' || state === 'closed') {
+          console.log(`ICE connection with ${userId} is ${state}, attempting to reconnect`)
+
+          // Close the failed connection
+          call.close()
+          delete peers[userId]
+
+          // Remove the video container
+          const container = document.getElementById(`container-${userId}`)
+          if (container) {
+            container.remove()
+          }
+
+          // Try to reconnect after a short delay
+          setTimeout(() => {
+            if (myStream) {
+              console.log(`Retrying connection to ${userId} after ICE failure`)
+              connectToNewUser(userId, myStream)
+            }
+          }, 2000)
+        }
+      })
+    }
+  } catch (err) {
+    // Clear the timeout if we caught an error
+    clearTimeout(connectionTimeout)
+
+    console.error('Error creating call:', err)
+    updateStatus(`Failed to connect to user: ${err.message}`, true)
 
     // Remove the placeholder container
-    container.remove()
-
-    // Add the actual video stream
-    addVideoStream(video, userVideoStream, userId)
-    updateStatus(`Connected with user: ${userId.substring(0, 8)}...`)
-
-    // Optimize the peer connection if possible
-    if (call.peerConnection) {
-      // Set high priority for audio
-      call.peerConnection.getSenders().forEach(sender => {
-        if (sender.track && sender.track.kind === 'audio') {
-          const params = sender.getParameters();
-          if (params.encodings) {
-            params.encodings.forEach(encoding => {
-              encoding.priority = 'high';
-              encoding.networkPriority = 'high';
-            });
-            sender.setParameters(params).catch(e => console.error('Error setting priority:', e));
-          }
-        }
-      });
-
-      // Start network quality monitoring when we have an active connection
-      startNetworkMonitoring();
-    }
-  })
-
-  call.on('error', err => {
-    console.error('Call error:', err)
-    updateStatus(`Error connecting to user: ${err.message}`, true)
-
-    // Remove the placeholder on error
     const placeholderContainer = document.getElementById(`container-${userId}`)
     if (placeholderContainer) {
       placeholderContainer.remove()
     }
-  })
+  }
+}
 
-  call.on('close', () => {
-    console.log('Call closed for user:', userId)
-    const container = document.getElementById(`container-${userId}`)
-    if (container) {
-      container.remove()
+// Function to monitor a specific peer connection
+function monitorSpecificConnection(peerConnection, userId) {
+  // Monitor connection stats periodically
+  const statsInterval = setInterval(() => {
+    // Check if the connection still exists
+    if (!peers[userId] || !peerConnection) {
+      clearInterval(statsInterval)
+      return
     }
-  })
 
-  peers[userId] = call
+    // Get connection state
+    const connectionState = peerConnection.connectionState || peerConnection.iceConnectionState
+    console.log(`Connection state with ${userId}: ${connectionState}`)
+
+    // If connection is in a problematic state, try to reconnect
+    if (connectionState === 'failed' || connectionState === 'disconnected') {
+      console.log(`Connection with ${userId} is ${connectionState}, will attempt to reconnect`)
+      clearInterval(statsInterval)
+
+      // Close the connection
+      if (peers[userId]) {
+        peers[userId].close()
+        delete peers[userId]
+      }
+
+      // Try to reconnect if we have a stream
+      if (myStream) {
+        setTimeout(() => {
+          console.log(`Reconnecting to ${userId} after detecting ${connectionState} state`)
+          connectToNewUser(userId, myStream)
+        }, 2000)
+      }
+    }
+
+    // Get detailed stats to check for issues
+    peerConnection.getStats().then(stats => {
+      let hasActiveAudio = false
+      let hasActiveVideo = false
+
+      stats.forEach(report => {
+        // Check for active media tracks
+        if (report.type === 'inbound-rtp' && report.kind === 'audio' && report.bytesReceived > 0) {
+          hasActiveAudio = true
+        }
+        if (report.type === 'inbound-rtp' && report.kind === 'video' && report.bytesReceived > 0) {
+          hasActiveVideo = true
+        }
+
+        // Log any significant packet loss
+        if (report.type === 'inbound-rtp' && report.packetsLost > 0 && report.packetsReceived > 0) {
+          const lossRate = report.packetsLost / (report.packetsLost + report.packetsReceived)
+          if (lossRate > 0.1) { // More than 10% packet loss
+            console.warn(`High packet loss (${(lossRate * 100).toFixed(1)}%) detected with ${userId}`)
+          }
+        }
+      })
+
+      // If we should have media but don't detect any, there might be an issue
+      if (!hasActiveAudio && !hasActiveVideo && connectionState === 'connected') {
+        console.warn(`Connection with ${userId} appears to be connected but no media is flowing`)
+      }
+    }).catch(err => {
+      console.error(`Error getting stats for connection with ${userId}:`, err)
+    })
+  }, 5000) // Check every 5 seconds
 }
 
 function addVideoStream(video, stream, userId = 'local') {

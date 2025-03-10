@@ -110,8 +110,10 @@ io.on('connection', socket => {
   let currentUserId = null
   let isRefreshing = false
 
+  console.log('New socket connection:', socket.id)
+
   socket.on('join-room', (roomId, userId, userName = null) => {
-    console.log(`User ${userId} joined room ${roomId}`)
+    console.log(`User ${userId} joined room ${roomId} with socket ${socket.id}`)
 
     // Store room and user info
     currentRoomId = roomId
@@ -120,18 +122,29 @@ io.on('connection', socket => {
     // Initialize room if it doesn't exist
     if (!rooms[roomId]) {
       rooms[roomId] = {}
+      console.log(`Created new room: ${roomId}`)
     }
 
-    // Check if this is a reconnection (user refreshed the page)
-    const isReconnection = rooms[roomId] && rooms[roomId][userId];
+    // Check if this is a reconnection (user refreshed the page or reconnected)
+    const isReconnection = rooms[roomId] && rooms[roomId][userId]
 
-    // Add or update user in room
-    rooms[roomId][userId] = {
-      id: userId,
-      name: userName || `User ${userId.substring(0, 8)}...`,
-      socketId: socket.id,
-      lastSeen: Date.now(),
-      connected: true
+    if (isReconnection) {
+      console.log(`User ${userId} is reconnecting to room ${roomId}`)
+
+      // Update the socket ID and connection status
+      rooms[roomId][userId].socketId = socket.id
+      rooms[roomId][userId].connected = true
+      rooms[roomId][userId].lastSeen = Date.now()
+    } else {
+      // Add new user to room
+      console.log(`Adding new user ${userId} to room ${roomId}`)
+      rooms[roomId][userId] = {
+        id: userId,
+        name: userName || `User ${userId.substring(0, 8)}...`,
+        socketId: socket.id,
+        lastSeen: Date.now(),
+        connected: true
+      }
     }
 
     // Track user session
@@ -144,7 +157,7 @@ io.on('connection', socket => {
     // Join the socket room
     socket.join(roomId)
 
-    // Notify others that user connected, even on reconnection
+    // Notify others that user connected
     // This ensures peers always try to establish connections
     socket.to(roomId).emit('user-connected', userId)
 
@@ -153,21 +166,29 @@ io.on('connection', socket => {
 
     // Log active users in the room
     console.log(`Active users in room ${roomId}:`, Object.keys(rooms[roomId]).length)
+    console.log(`User list:`, Object.keys(rooms[roomId]).map(id =>
+      `${id} (${rooms[roomId][id].connected ? 'connected' : 'disconnected'})`
+    ))
 
     socket.on('disconnect', () => {
-      console.log(`User ${userId} disconnected from room ${roomId}`)
+      console.log(`User ${userId} disconnected from room ${roomId} (socket ${socket.id})`)
 
       // Mark the user as temporarily disconnected but don't remove yet
       if (rooms[roomId] && rooms[roomId][userId]) {
-        rooms[roomId][userId].connected = false;
-        rooms[roomId][userId].lastSeen = Date.now();
+        rooms[roomId][userId].connected = false
+        rooms[roomId][userId].lastSeen = Date.now()
 
         // Immediately update the user list to show disconnected status
-        io.to(roomId).emit('user-list-update', rooms[roomId]);
+        io.to(roomId).emit('user-list-update', rooms[roomId])
+
+        console.log(`Marked user ${userId} as disconnected in room ${roomId}`)
+        console.log(`Current users in room:`, Object.keys(rooms[roomId]).map(id =>
+          `${id} (${rooms[roomId][id].connected ? 'connected' : 'disconnected'})`
+        ))
       }
 
       if (userSessions[userId]) {
-        userSessions[userId].lastSeen = Date.now();
+        userSessions[userId].lastSeen = Date.now()
       }
 
       // Set a longer timeout to check if the user reconnects
@@ -178,58 +199,84 @@ io.on('connection', socket => {
             userSessions[userId] &&
             userSessions[userId].lastSeen === rooms[roomId][userId].lastSeen) {
 
-          console.log(`User ${userId} did not reconnect after 10 seconds, removing from room ${roomId}`);
+          console.log(`User ${userId} did not reconnect after 20 seconds, removing from room ${roomId}`)
 
           // Remove user from room
-          delete rooms[roomId][userId];
+          delete rooms[roomId][userId]
 
           // Clean up empty rooms
           if (Object.keys(rooms[roomId]).length === 0) {
-            delete rooms[roomId];
-            console.log(`Room ${roomId} is now empty and has been removed`);
+            delete rooms[roomId]
+            console.log(`Room ${roomId} is now empty and has been removed`)
           }
 
           // Remove user session
-          delete userSessions[userId];
+          delete userSessions[userId]
 
           // Notify others that user disconnected
-          io.to(roomId).emit('user-disconnected', userId);
+          io.to(roomId).emit('user-disconnected', userId)
 
           // Send updated user list
           if (rooms[roomId]) {
-            io.to(roomId).emit('user-list-update', rooms[roomId]);
+            io.to(roomId).emit('user-list-update', rooms[roomId])
+            console.log(`Updated user list after removing ${userId}:`, Object.keys(rooms[roomId]))
           }
         }
-      }, 10000); // 10 second timeout to detect if this is a refresh or a true disconnect
-    });
+      }, 20000) // 20 second timeout to detect if this is a refresh or a true disconnect
+    })
   })
 
   // Handle force reconnect requests
   socket.on('force-reconnect', (roomId, userId) => {
-    console.log(`User ${userId} requested force reconnect in room ${roomId}`);
+    console.log(`User ${userId} requested force reconnect in room ${roomId}`)
 
-    // Mark the user as connected if they were previously disconnected
-    if (rooms[roomId] && rooms[roomId][userId]) {
-      rooms[roomId][userId].connected = true;
-      rooms[roomId][userId].lastSeen = Date.now();
+    // Validate room and user exist
+    if (!rooms[roomId]) {
+      console.log(`Room ${roomId} does not exist for force reconnect`)
+      return
+    }
+
+    // Mark the user as connected if they exist in the room
+    if (rooms[roomId][userId]) {
+      rooms[roomId][userId].connected = true
+      rooms[roomId][userId].lastSeen = Date.now()
+      rooms[roomId][userId].socketId = socket.id
+
+      console.log(`Updated connection status for user ${userId} in room ${roomId}`)
+    } else {
+      console.log(`User ${userId} not found in room ${roomId} for force reconnect`)
+
+      // Add the user to the room if they don't exist
+      rooms[roomId][userId] = {
+        id: userId,
+        name: `User ${userId.substring(0, 8)}...`,
+        socketId: socket.id,
+        lastSeen: Date.now(),
+        connected: true
+      }
+
+      console.log(`Added user ${userId} to room ${roomId} during force reconnect`)
     }
 
     // Notify all other users in the room to reconnect to this user
-    socket.to(roomId).emit('user-reconnect-request', userId);
+    socket.to(roomId).emit('user-reconnect-request', userId)
 
     // Send updated user list to all clients in the room
-    io.to(roomId).emit('user-list-update', rooms[roomId]);
+    io.to(roomId).emit('user-list-update', rooms[roomId])
 
     // Log reconnection attempt
-    console.log(`Force reconnect initiated for user ${userId} in room ${roomId}`);
+    console.log(`Force reconnect initiated for user ${userId} in room ${roomId}`)
     console.log(`Current users in room:`, Object.keys(rooms[roomId] || {}).map(id =>
       `${id} (${rooms[roomId][id].connected ? 'connected' : 'disconnected'})`
-    ));
+    ))
   })
 
   // Handle group chat messages
   socket.on('send-message', (messageData) => {
-    if (!currentRoomId) return
+    if (!currentRoomId) {
+      console.log('Received message but no current room ID')
+      return
+    }
 
     console.log(`Group message in room ${currentRoomId} from ${messageData.sender}`)
 
@@ -239,7 +286,10 @@ io.on('connection', socket => {
 
   // Handle private messages
   socket.on('send-private-message', (messageData) => {
-    if (!currentRoomId || !messageData.recipient) return
+    if (!currentRoomId || !messageData.recipient) {
+      console.log('Received private message but missing room ID or recipient')
+      return
+    }
 
     console.log(`Private message from ${messageData.sender} to ${messageData.recipient}`)
 
@@ -249,6 +299,24 @@ io.on('connection', socket => {
     if (recipientData) {
       // Send only to the specific recipient
       io.to(recipientData.socketId).emit('receive-private-message', messageData)
+      console.log(`Delivered private message to ${messageData.recipient}`)
+    } else {
+      console.log(`Could not deliver private message - recipient ${messageData.recipient} not found`)
+    }
+  })
+
+  // Handle ping/pong for connection health checks
+  socket.on('ping-server', (data) => {
+    // Respond immediately with a pong
+    socket.emit('pong-server', {
+      timestamp: Date.now(),
+      userId: data.userId,
+      roomId: data.roomId
+    })
+
+    // Update the user's last seen time if they're in a room
+    if (data.roomId && data.userId && rooms[data.roomId] && rooms[data.roomId][data.userId]) {
+      rooms[data.roomId][data.userId].lastSeen = Date.now()
     }
   })
 })
