@@ -1,0 +1,20 @@
+# Render deployment configuration
+services:
+  - type: web
+    name: rexmeet
+    env: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: PEER_PORT
+        value: 443
+      - key: HOST
+        fromService:
+          name: rexmeet
+          type: web
+          property: host
+    healthCheckPath: /

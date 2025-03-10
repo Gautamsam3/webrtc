@@ -28,16 +28,37 @@ const sendMessageBtn = document.getElementById('send-message')
 // Check if we have a stored peer ID from a previous session
 const storedPeerId = sessionStorage.getItem('myPeerId')
 
+// Get environment configuration
+const isSecure = window.location.protocol === 'https:';
+const peerPort = window.location.hostname === 'localhost' ||
+                 window.location.hostname === '127.0.0.1' ?
+                 '3002' : '443'; // Use 443 in production
+
+// Create Peer connection with appropriate configuration
 const myPeer = new Peer(storedPeerId, {
   host: window.location.hostname,
-  port: '3002',
-  secure: true,  // Enable HTTPS
+  port: peerPort,
+  path: window.location.hostname === 'localhost' ||
+        window.location.hostname === '127.0.0.1' ?
+        '/' : '/peerjs', // Use /peerjs path in production
+  secure: isSecure,
   debug: 3,
   config: {
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun2.l.google.com:19302' }
+      { urls: 'stun:stun2.l.google.com:19302' },
+      // Add TURN servers for better connectivity across networks
+      {
+        urls: 'turn:numb.viagenie.ca',
+        credential: 'muazkh',
+        username: 'webrtc@live.com'
+      },
+      {
+        urls: 'turn:turn.anyfirewall.com:443?transport=tcp',
+        credential: 'webrtc',
+        username: 'webrtc'
+      }
     ],
     iceTransportPolicy: 'all',
     sdpSemantics: 'unified-plan',
@@ -404,9 +425,9 @@ function disconnect() {
   // Notify the user
   updateStatus('Disconnected from the room')
 
-  // Redirect to Google after a short delay
+  // Redirect to home page after a short delay
   setTimeout(() => {
-    window.location.href = 'https://192.168.165.151:3000/'
+    window.location.href = '/'
   }, 1500)
 }
 

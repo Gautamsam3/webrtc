@@ -1,26 +1,43 @@
 const express = require('express')
 const app = express()
 const fs = require('fs')
+const http = require('http')
 const https = require('https')
+require('dotenv').config()
 
-// SSL certificates for HTTPS
-const options = {
-  key: fs.readFileSync('ssl/key.pem'),
-  cert: fs.readFileSync('ssl/cert.pem')
+// Environment variables
+const PORT = process.env.PORT || 3000
+const PEER_PORT = process.env.PEER_PORT || 3002
+const NODE_ENV = process.env.NODE_ENV || 'development'
+const HOST = process.env.HOST || 'localhost'
+
+// Determine if we're in production
+const isProduction = NODE_ENV === 'production'
+
+// Create appropriate server based on environment
+let server
+
+if (isProduction) {
+  // In production, we'll let the hosting platform handle SSL
+  server = http.createServer(app)
+} else {
+  // In development, use local SSL certificates
+  const options = {
+    key: fs.readFileSync('ssl/key.pem'),
+    cert: fs.readFileSync('ssl/cert.pem')
+  }
+  server = https.createServer(options, app)
 }
-
-// Create HTTPS server
-const server = https.createServer(options, app)
 const io = require('socket.io')(server)
 const { v4: uuidV4 } = require('uuid')
 const { PeerServer } = require('peer')
 
-// Create a separate PeerServer with better error handling and HTTPS
+// Create a separate PeerServer with appropriate configuration
 const peerServer = PeerServer({
-  port: 3002,
+  port: PEER_PORT,
   path: '/',
   host: '0.0.0.0',
-  ssl: {
+  ssl: isProduction ? undefined : {
     key: fs.readFileSync('ssl/key.pem'),
     cert: fs.readFileSync('ssl/cert.pem')
   },
@@ -35,7 +52,7 @@ peerServer.on('disconnect', (client) => {
   console.log('PeerJS client disconnected:', client.getId())
 })
 
-console.log('PeerServer running on port 3002 with HTTPS')
+console.log(`PeerServer running on port ${PEER_PORT} with ${isProduction ? 'HTTP' : 'HTTPS'}`)
 
 app.set('view engine', 'ejs')
 app.use(express.static('public'))
@@ -184,8 +201,14 @@ io.on('connection', socket => {
   })
 })
 
-server.listen(3000, '0.0.0.0', () => {
-  console.log('HTTPS Server running on port 3000')
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server running on port ${PORT} with ${isProduction ? 'HTTP' : 'HTTPS'}`)
   console.log('To connect from another device, use the following URL:')
-  console.log('https://192.168.165.151:3000')
+
+  if (isProduction) {
+    console.log(`https://${HOST}`)
+  } else {
+    // For local development
+    console.log(`https://localhost:${PORT}`)
+  }
 })

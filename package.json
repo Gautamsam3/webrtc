@@ -1,15 +1,21 @@
 {
-  "name": "webrtc",
+  "name": "rexmeet",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "generate-ssl": "./generate-ssl.sh",
+    "deploy-heroku": "./deploy-heroku.sh",
+    "setup": "./setup-local.sh"
   },
-  "keywords": [],
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "keywords": ["rexmeet", "video-chat", "peer-to-peer"],
   "author": "",
   "license": "ISC",
-  "description": "",
+  "description": "rexmeet",
   "dependencies": {
     "dotenv": "^16.4.7",
     "ejs": "^3.1.10",

@@ -1,0 +1,21 @@
+{
+  "name": "RexMeet",
+  "description": "A WebRTC-based video chat application",
+  "repository": "https://github.com/yourusername/rexmeet",
+  "keywords": ["node", "express", "webrtc", "socket.io", "video-chat"],
+  "env": {
+    "NODE_ENV": {
+      "description": "Environment setting",
+      "value": "production"
+    },
+    "HOST": {
+      "description": "The domain name of your application",
+      "value": ""
+    }
+  },
+  "buildpacks": [
+    {
+      "url": "heroku/nodejs"
+    }
+  ]
+}
