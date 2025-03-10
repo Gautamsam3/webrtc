@@ -113,6 +113,12 @@ io.on('connection', socket => {
   console.log('New socket connection:', socket.id)
 
   socket.on('join-room', (roomId, userId, userName = null) => {
+    // Generate a valid userId if one isn't provided
+    if (userId === null || userId === undefined) {
+      userId = `user_${socket.id.substring(0, 8)}`
+      console.log(`Generated new userId ${userId} for null userId in room ${roomId}`)
+    }
+
     console.log(`User ${userId} joined room ${roomId} with socket ${socket.id}`)
 
     // Store room and user info
@@ -235,6 +241,12 @@ io.on('connection', socket => {
 
   // Handle force reconnect requests
   socket.on('force-reconnect', (roomId, userId) => {
+    // Generate a valid userId if one isn't provided
+    if (userId === null || userId === undefined) {
+      userId = `user_${socket.id.substring(0, 8)}`
+      console.log(`Generated new userId ${userId} for null userId in force reconnect to room ${roomId}`)
+    }
+
     console.log(`User ${userId} requested force reconnect in room ${roomId}`)
 
     // Validate room and user exist
