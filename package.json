@@ -7,7 +7,7 @@
     "dev": "nodemon server.js",
     "generate-ssl": "./generate-ssl.sh",
     "deploy-heroku": "./deploy-heroku.sh",
-    "setup": "./setup-local.sh"
+    "build": "./setup-local.sh"
   },
   "engines": {
     "node": ">=16.0.0"
