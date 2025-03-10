@@ -138,9 +138,16 @@ io.on('connection', socket => {
     } else {
       // Add new user to room
       console.log(`Adding new user ${userId} to room ${roomId}`)
+
+      // Check if userId is null or undefined
+      if (userId === null || userId === undefined) {
+        console.error('Error: Attempted to add user with null or undefined userId');
+        return; // Exit early to prevent the error
+      }
+
       rooms[roomId][userId] = {
         id: userId,
-        name: userName || `User ${userId.substring(0, 8)}...`,
+        name: userName || `User ${userId ? userId.substring(0, 8) : 'Unknown'}...`,
         socketId: socket.id,
         lastSeen: Date.now(),
         connected: true
@@ -246,10 +253,16 @@ io.on('connection', socket => {
     } else {
       console.log(`User ${userId} not found in room ${roomId} for force reconnect`)
 
+      // Check if userId is null or undefined
+      if (userId === null || userId === undefined) {
+        console.error('Error: Attempted to add user with null or undefined userId during force reconnect');
+        return; // Exit early to prevent the error
+      }
+
       // Add the user to the room if they don't exist
       rooms[roomId][userId] = {
         id: userId,
-        name: `User ${userId.substring(0, 8)}...`,
+        name: `User ${userId ? userId.substring(0, 8) : 'Unknown'}...`,
         socketId: socket.id,
         lastSeen: Date.now(),
         connected: true
