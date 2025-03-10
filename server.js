@@ -37,15 +37,16 @@ const { PeerServer } = require('peer')
 // Configure PeerServer based on environment
 let peerServer;
 if (isProduction) {
-  // In production, use HTTP for PeerServer and let Render handle SSL
+  // In production, integrate PeerServer with Express app
   peerServer = PeerServer({
-    port: process.env.PORT || 3002,
     path: '/peerjs',
-    proxied: true
-  })
-  console.log('PeerServer running in production mode')
+    proxied: true,
+    port: 443, // This is ignored when using the Express integration
+    server: server // Use the same server instance
+  });
+  console.log('PeerServer integrated with main server in production mode');
 } else {
-  // In development, use HTTPS with local certificates
+  // In development, use a separate server with HTTPS
   try {
     peerServer = PeerServer({
       port: 3002,
@@ -55,27 +56,26 @@ if (isProduction) {
         key: fs.readFileSync('ssl/key.pem'),
         cert: fs.readFileSync('ssl/cert.pem')
       }
-    })
-    console.log('PeerServer running in development mode with HTTPS')
+    });
+    console.log('PeerServer running in development mode with HTTPS on port 3002');
   } catch (err) {
-    console.error('Failed to load SSL certificates for PeerServer:', err.message)
+    console.error('Failed to load SSL certificates for PeerServer:', err.message);
     peerServer = PeerServer({
       port: 3002,
       path: '/',
       proxied: true
-    })
+    });
+    console.log('PeerServer running in development mode on port 3002');
   }
 }
 
 peerServer.on('connection', (client) => {
-  console.log('PeerJS client connected:', client.getId())
-})
+  console.log('PeerJS client connected:', client.getId());
+});
 
 peerServer.on('disconnect', (client) => {
-  console.log('PeerJS client disconnected:', client.getId())
-})
-
-console.log('PeerServer running on port 3002 with HTTPS')
+  console.log('PeerJS client disconnected:', client.getId());
+});
 
 app.set('view engine', 'ejs')
 app.use(express.static(path.join(__dirname, 'public')))
