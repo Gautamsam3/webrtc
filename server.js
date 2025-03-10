@@ -41,19 +41,28 @@ app.set('view engine', 'ejs')
 app.use(express.static('public'))
 
 app.get('/', (req, res) => {
-  res.redirect(`/${uuidV4()}`)
+  res.render('index')
 })
 
 app.get('/:room', (req, res) => {
-  res.render('room', { roomId: req.params.room })
+  // Validate room name to prevent security issues
+  const roomName = req.params.room
+  if (!/^[a-zA-Z0-9-_]+$/.test(roomName)) {
+    return res.redirect('/')
+  }
+
+  res.render('room', { roomId: roomName })
 })
 
 // Store connected users by room
 const rooms = {}
+// Store user session information
+const userSessions = {}
 
 io.on('connection', socket => {
   let currentRoomId = null
   let currentUserId = null
+  let isRefreshing = false
 
   socket.on('join-room', (roomId, userId, userName = null) => {
     console.log(`User ${userId} joined room ${roomId}`)
@@ -67,18 +76,32 @@ io.on('connection', socket => {
       rooms[roomId] = {}
     }
 
-    // Add user to room
+    // Check if this is a reconnection (user refreshed the page)
+    const isReconnection = rooms[roomId] && rooms[roomId][userId];
+
+    // Add or update user in room
     rooms[roomId][userId] = {
       id: userId,
       name: userName || `User ${userId.substring(0, 8)}...`,
-      socketId: socket.id
+      socketId: socket.id,
+      lastSeen: Date.now()
+    }
+
+    // Track user session
+    userSessions[userId] = {
+      roomId: roomId,
+      socketId: socket.id,
+      lastSeen: Date.now()
     }
 
     // Join the socket room
     socket.join(roomId)
 
-    // Notify others that user connected
-    socket.to(roomId).emit('user-connected', userId)
+    // Only notify others if this is not a reconnection (refresh)
+    if (!isReconnection) {
+      // Notify others that user connected
+      socket.to(roomId).emit('user-connected', userId)
+    }
 
     // Send updated user list to all clients in the room
     io.to(roomId).emit('user-list-update', rooms[roomId])
@@ -86,23 +109,45 @@ io.on('connection', socket => {
     socket.on('disconnect', () => {
       console.log(`User ${userId} disconnected from room ${roomId}`)
 
-      // Remove user from room
+      // Mark the user's last seen time
       if (rooms[roomId] && rooms[roomId][userId]) {
-        delete rooms[roomId][userId]
+        rooms[roomId][userId].lastSeen = Date.now()
+      }
 
-        // Clean up empty rooms
-        if (Object.keys(rooms[roomId]).length === 0) {
-          delete rooms[roomId]
+      if (userSessions[userId]) {
+        userSessions[userId].lastSeen = Date.now()
+      }
+
+      // Set a timeout to check if the user reconnects (e.g., refreshed the page)
+      setTimeout(() => {
+        // If the user hasn't reconnected within the timeout period
+        if (userSessions[userId] &&
+            userSessions[userId].lastSeen === rooms[roomId]?.[userId]?.lastSeen) {
+
+          console.log(`User ${userId} did not reconnect, removing from room ${roomId}`)
+
+          // Remove user from room
+          if (rooms[roomId] && rooms[roomId][userId]) {
+            delete rooms[roomId][userId]
+
+            // Clean up empty rooms
+            if (Object.keys(rooms[roomId]).length === 0) {
+              delete rooms[roomId]
+            }
+          }
+
+          // Remove user session
+          delete userSessions[userId]
+
+          // Notify others that user disconnected
+          socket.to(roomId).emit('user-disconnected', userId)
+
+          // Send updated user list
+          if (rooms[roomId]) {
+            io.to(roomId).emit('user-list-update', rooms[roomId])
+          }
         }
-      }
-
-      // Notify others that user disconnected
-      socket.to(roomId).emit('user-disconnected', userId)
-
-      // Send updated user list
-      if (rooms[roomId]) {
-        io.to(roomId).emit('user-list-update', rooms[roomId])
-      }
+      }, 5000) // 5 second timeout to detect if this is a refresh or a true disconnect
     })
   })
 

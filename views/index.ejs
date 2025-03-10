@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="ie=edge">
+  <title>RexMeet Video Chat - Create or Join Room</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .home-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      padding: 20px;
+      box-sizing: border-box;
+    }
+
+    .logo {
+      margin-bottom: 30px;
+      max-width: 200px;
+    }
+
+    .card {
+      background-color: rgba(0, 0, 0, 0.6);
+      border-radius: 10px;
+      padding: 30px;
+      width: 100%;
+      max-width: 500px;
+      box-shadow: 0 10px 20px rgba(0, 0, 0, 0.3);
+    }
+
+    h1 {
+      text-align: center;
+      margin-bottom: 30px;
+      color: #2196F3;
+    }
+
+    .form-group {
+      margin-bottom: 20px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: bold;
+    }
+
+    input[type="text"] {
+      width: 100%;
+      padding: 12px;
+      border-radius: 5px;
+      border: 1px solid #444;
+      background-color: rgba(255, 255, 255, 0.1);
+      color: white;
+      font-size: 16px;
+      box-sizing: border-box;
+    }
+
+    .button-group {
+      display: flex;
+      gap: 15px;
+      margin-top: 30px;
+    }
+
+    .btn {
+      flex: 1;
+      padding: 12px 20px;
+      border: none;
+      border-radius: 5px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: all 0.3s ease;
+    }
+
+    .btn-primary {
+      background-color: #2196F3;
+      color: white;
+    }
+
+    .btn-secondary {
+      background-color: #4CAF50;
+      color: white;
+    }
+
+    .btn:hover {
+      opacity: 0.9;
+      transform: translateY(-2px);
+    }
+
+    .divider {
+      display: flex;
+      align-items: center;
+      margin: 30px 0;
+      color: #aaa;
+    }
+
+    .divider::before,
+    .divider::after {
+      content: "";
+      flex: 1;
+      border-bottom: 1px solid #444;
+    }
+
+    .divider::before {
+      margin-right: 10px;
+    }
+
+    .divider::after {
+      margin-left: 10px;
+    }
+
+    .error-message {
+      color: #f44336;
+      margin-top: 5px;
+      font-size: 14px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="home-container">
+    <img src="/assets/mic.png" alt="Logo" class="logo">
+
+    <div class="card">
+      <h1>RexMeet</h1>
+
+      <form id="create-room-form" action="/create-room" method="POST">
+        <div class="form-group">
+          <label for="room-name">Create a New Room</label>
+          <input type="text" id="room-name" name="roomName" placeholder="Enter a room name" required>
+          <div id="room-error" class="error-message"></div>
+        </div>
+
+        <button type="submit" class="btn btn-primary">Create Room</button>
+      </form>
+
+      <div class="divider">OR</div>
+
+      <div class="form-group">
+        <label for="join-room">Join an Existing Room</label>
+        <input type="text" id="join-room" placeholder="Enter a room name">
+        <div id="join-error" class="error-message"></div>
+      </div>
+
+      <button id="join-btn" class="btn btn-secondary">Join Room</button>
+    </div>
+  </div>
+
+  <script>
+    document.getElementById('create-room-form').addEventListener('submit', function(e) {
+      e.preventDefault();
+
+      const roomName = document.getElementById('room-name').value.trim();
+      const errorElement = document.getElementById('room-error');
+
+      if (!roomName) {
+        errorElement.textContent = 'Please enter a room name';
+        return;
+      }
+
+      // Check if room name contains only valid characters
+      if (!/^[a-zA-Z0-9-_]+$/.test(roomName)) {
+        errorElement.textContent = 'Room name can only contain letters, numbers, hyphens and underscores';
+        return;
+      }
+
+      // Redirect to the room
+      window.location.href = `/${roomName}`;
+    });
+
+    document.getElementById('join-btn').addEventListener('click', function() {
+      const roomName = document.getElementById('join-room').value.trim();
+      const errorElement = document.getElementById('join-error');
+
+      if (!roomName) {
+        errorElement.textContent = 'Please enter a room name';
+        return;
+      }
+
+      // Check if room name contains only valid characters
+      if (!/^[a-zA-Z0-9-_]+$/.test(roomName)) {
+        errorElement.textContent = 'Room name can only contain letters, numbers, hyphens and underscores';
+        return;
+      }
+
+      // Redirect to the room
+      window.location.href = `/${roomName}`;
+    });
+  </script>
+</body>
+
+</html>

@@ -1,4 +1,10 @@
-const socket = io('/')
+// Configure Socket.io with options for lower latency
+const socket = io('/', {
+  transports: ['websocket'], // Use WebSocket only, skip long-polling
+  upgrade: false, // Disable transport upgrades
+  reconnectionDelay: 1000, // Faster reconnection
+  timeout: 10000 // Shorter timeout
+})
 const videoGrid = document.getElementById('video-grid')
 const statusMessage = document.getElementById('status-message')
 const videoToggleBtn = document.getElementById('video-toggle')
@@ -19,12 +25,48 @@ const chatMessages = document.getElementById('chat-messages')
 const chatInput = document.getElementById('chat-input')
 const sendMessageBtn = document.getElementById('send-message')
 
-const myPeer = new Peer(undefined, {
+// Check if we have a stored peer ID from a previous session
+const storedPeerId = sessionStorage.getItem('myPeerId')
+
+const myPeer = new Peer(storedPeerId, {
   host: window.location.hostname,
   port: '3002',
   secure: true,  // Enable HTTPS
-  debug: 3
+  debug: 3,
+  config: {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' }
+    ],
+    iceTransportPolicy: 'all',
+    sdpSemantics: 'unified-plan',
+    // Optimize for lower latency
+    iceCandidatePoolSize: 10, // Increase candidate gathering speed
+    bundlePolicy: 'max-bundle', // Bundle all media tracks
+    rtcpMuxPolicy: 'require' // Require RTCP multiplexing
+  }
 })
+
+// Configure WebRTC peer connection options for lower latency
+myPeer.on('call', call => {
+  // Access the underlying RTCPeerConnection to set additional options
+  if (call.peerConnection) {
+    // Set high priority for audio
+    call.peerConnection.getSenders().forEach(sender => {
+      if (sender.track && sender.track.kind === 'audio') {
+        const params = sender.getParameters();
+        if (!params.priority && params.encodings) {
+          params.encodings.forEach(encoding => {
+            encoding.priority = 'high';
+            encoding.networkPriority = 'high';
+          });
+          sender.setParameters(params).catch(e => console.error('Error setting priority:', e));
+        }
+      }
+    });
+  }
+});
 
 // Chat state
 let currentChatMode = 'group'
@@ -42,12 +84,32 @@ let isAudioEnabled = true
 let isScreenSharing = false
 let myPeerId = null
 let myName = 'You'
+let isRefreshing = false
+
+// Network quality monitoring
+let networkQuality = 'medium' // 'low', 'medium', 'high'
+let lastBitrateCheck = Date.now()
+let bitrateCheckInterval = null
+let lastBytes = 0
 
 // Update status message
 function updateStatus(message, isError = false) {
   statusMessage.textContent = message
   statusMessage.style.backgroundColor = isError ? 'rgba(244, 67, 54, 0.2)' : 'rgba(33, 150, 243, 0.2)'
   statusMessage.style.borderLeft = `6px solid ${isError ? '#f44336' : '#2196F3'}`
+}
+
+// Function to update the video grid layout based on the number of users
+function updateVideoGridLayout() {
+  const remoteUsers = Object.keys(userList).filter(id => id !== myPeerId)
+
+  if (remoteUsers.length === 1) {
+    // If there's only one remote user, apply the single-user class
+    videoGrid.classList.add('single-user')
+  } else {
+    // If there are multiple remote users, use the grid layout
+    videoGrid.classList.remove('single-user')
+  }
 }
 
 // Add error handling for PeerJS
@@ -172,7 +234,6 @@ function sendMessage() {
     addMessageToChat({
       sender: myPeerId,
       name: myName,
-      message,
       message: `(Private) ${message}`,
       time,
       isPrivate: true,
@@ -311,6 +372,12 @@ function toggleAudio() {
 function disconnect() {
   updateStatus('Disconnecting from the room...')
 
+  // Stop network monitoring
+  if (bitrateCheckInterval) {
+    clearInterval(bitrateCheckInterval)
+    bitrateCheckInterval = null
+  }
+
   // Close all peer connections
   Object.keys(peers).forEach(userId => {
     if (peers[userId]) {
@@ -328,21 +395,36 @@ function disconnect() {
     myStream = null
   }
 
+  // Clear the stored peer ID when intentionally disconnecting
+  sessionStorage.removeItem('myPeerId')
+
   // Disconnect from the socket
   socket.disconnect()
 
   // Notify the user
   updateStatus('Disconnected from the room')
 
-  // Redirect to home page after a short delay
+  // Redirect to Google after a short delay
   setTimeout(() => {
-    window.location.href = '/'
+    window.location.href = 'https://192.168.165.151:3000/'
   }, 1500)
 }
 
 // Force reconnection to all peers
 function forceReconnect() {
   updateStatus('Forcing reconnection to all peers...')
+
+  // Stop network monitoring during reconnection
+  if (bitrateCheckInterval) {
+    clearInterval(bitrateCheckInterval)
+    bitrateCheckInterval = null
+  }
+
+  // First, remove all video containers except local
+  const containers = document.querySelectorAll('.video-container:not(.local)')
+  containers.forEach(container => {
+    container.remove()
+  })
 
   // Close all existing peer connections
   Object.keys(peers).forEach(userId => {
@@ -353,11 +435,14 @@ function forceReconnect() {
     }
   })
 
-  // Clear the video grid except for our own video container
-  const containers = document.querySelectorAll('.video-container:not(.local)')
-  containers.forEach(container => {
+  // Clear any connecting placeholders that might be left
+  const connectingContainers = document.querySelectorAll('.connecting')
+  connectingContainers.forEach(container => {
     container.remove()
   })
+
+  // Clear the peers object completely to ensure no stale connections
+  Object.keys(peers).forEach(key => delete peers[key])
 
   // Emit a special message to the server to request reconnection
   socket.emit('force-reconnect', ROOM_ID, myPeerId)
@@ -392,15 +477,171 @@ function createExitButton(container) {
   return exitButton
 }
 
+// Network quality detection and adaptive quality
+function startNetworkMonitoring() {
+  if (bitrateCheckInterval) {
+    clearInterval(bitrateCheckInterval)
+  }
+
+  bitrateCheckInterval = setInterval(async () => {
+    // Only check if we have active peer connections
+    const activePeers = Object.values(peers).filter(peer =>
+      peer && peer.peerConnection && peer.peerConnection.connectionState === 'connected'
+    )
+
+    if (activePeers.length === 0) return
+
+    // Use the first active peer connection for stats
+    const pc = activePeers[0].peerConnection
+
+    try {
+      const stats = await pc.getStats()
+      let totalBitrate = 0
+      let totalPacketsLost = 0
+      let totalPackets = 0
+
+      stats.forEach(report => {
+        if (report.type === 'outbound-rtp' && report.bytesSent) {
+          const now = Date.now()
+          const bytes = report.bytesSent
+          const timeDiff = now - lastBitrateCheck
+
+          if (lastBytes > 0 && timeDiff > 0) {
+            // Calculate bitrate in kbps
+            const bitrate = 8 * (bytes - lastBytes) / timeDiff
+            totalBitrate += bitrate
+          }
+
+          lastBytes = bytes
+          lastBitrateCheck = now
+        }
+
+        if (report.type === 'outbound-rtp' && report.packetsLost) {
+          totalPacketsLost += report.packetsLost
+          totalPackets += report.packetsSent
+        }
+      })
+
+      // Calculate packet loss rate
+      const packetLossRate = totalPackets > 0 ? (totalPacketsLost / totalPackets) : 0
+
+      // Determine network quality based on bitrate and packet loss
+      let newQuality = 'medium' // Default
+
+      if (totalBitrate > 1500 && packetLossRate < 0.01) {
+        newQuality = 'high'
+      } else if (totalBitrate < 500 || packetLossRate > 0.05) {
+        newQuality = 'low'
+      }
+
+      // Only update if quality changed
+      if (newQuality !== networkQuality) {
+        networkQuality = newQuality
+        console.log(`Network quality changed to: ${networkQuality}`)
+        updateStatus(`Network quality: ${networkQuality.toUpperCase()}`)
+
+        // Adjust video quality based on network conditions
+        adjustVideoQuality(networkQuality)
+      }
+    } catch (e) {
+      console.error('Error getting connection stats:', e)
+    }
+  }, 3000) // Check every 3 seconds
+}
+
+// Adjust video quality based on network conditions
+async function adjustVideoQuality(quality) {
+  if (!myStream) return
+
+  const videoTrack = myStream.getVideoTracks()[0]
+  if (!videoTrack) return
+
+  try {
+    const constraints = {}
+
+    switch (quality) {
+      case 'high':
+        constraints.width = { ideal: 1280 }
+        constraints.height = { ideal: 720 }
+        constraints.frameRate = { ideal: 30, max: 30 }
+        break
+      case 'medium':
+        constraints.width = { ideal: 640 }
+        constraints.height = { ideal: 480 }
+        constraints.frameRate = { ideal: 24, max: 30 }
+        break
+      case 'low':
+        constraints.width = { ideal: 320 }
+        constraints.height = { ideal: 240 }
+        constraints.frameRate = { ideal: 15, max: 20 }
+        break
+    }
+
+    // Apply constraints to the video track
+    await videoTrack.applyConstraints(constraints)
+
+    // Update video bitrates in all peer connections
+    Object.values(peers).forEach(call => {
+      if (call.peerConnection) {
+        const sender = call.peerConnection.getSenders().find(s =>
+          s.track && s.track.kind === 'video'
+        )
+
+        if (sender) {
+          const params = sender.getParameters()
+          if (!params.encodings) {
+            params.encodings = [{}]
+          }
+
+          // Set bitrates based on quality
+          switch (quality) {
+            case 'high':
+              params.encodings[0].maxBitrate = 2500000 // 2.5 Mbps
+              break
+            case 'medium':
+              params.encodings[0].maxBitrate = 1000000 // 1 Mbps
+              break
+            case 'low':
+              params.encodings[0].maxBitrate = 500000 // 500 Kbps
+              break
+          }
+
+          sender.setParameters(params).catch(e =>
+            console.error('Error setting video parameters:', e)
+          )
+        }
+      }
+    })
+
+    console.log(`Video quality adjusted to ${quality}:`, constraints)
+  } catch (e) {
+    console.error('Error adjusting video quality:', e)
+  }
+}
+
 // Check if getUserMedia is supported
 if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
   console.log('getUserMedia is supported')
   updateStatus('Accessing camera and microphone...')
 
-  // Try to access camera with error handling
+  // Get initial video constraints based on estimated network quality
+  const getInitialVideoConstraints = () => {
+    // Start with medium quality by default
+    return {
+      width: { ideal: 640 },
+      height: { ideal: 480 },
+      frameRate: { ideal: 24, max: 30 }
+    }
+  }
+
+  // Try to access camera with error handling and optimized for low latency
   navigator.mediaDevices.getUserMedia({
-    video: true,
-    audio: true
+    video: getInitialVideoConstraints(),
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true
+    }
   }).then(stream => {
     console.log('Camera access successful')
     console.log('Stream tracks:', stream.getTracks().map(track => `${track.kind}: ${track.label} (${track.readyState})`))
@@ -443,11 +684,14 @@ if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
     socket.on('user-connected', userId => {
       console.log('User connected:', userId)
       updateStatus('New user joined the room')
-      // Add a slight delay before connecting to the new user
-      // This gives time for the signaling to complete
+      // Connect immediately to reduce latency
+      connectToNewUser(userId, stream)
+
+      // Set a timeout to automatically reconnect after 3 seconds when a new user joins
       setTimeout(() => {
-        connectToNewUser(userId, stream)
-      }, 1000)
+        console.log('Auto-reconnecting after new user joined')
+        forceReconnect()
+      }, 3000)
     })
 
     // Handle reconnection requests
@@ -462,10 +706,8 @@ if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
         delete peers[userId]
       }
 
-      // Reconnect to the user
-      setTimeout(() => {
-        connectToNewUser(userId, stream)
-      }, 1000)
+      // Reconnect to the user immediately to reduce latency
+      connectToNewUser(userId, stream)
     })
   }).catch(err => {
     console.error('Failed to get camera access:', err)
@@ -519,6 +761,9 @@ socket.on('user-disconnected', userId => {
     if (userList[userId]) {
       delete userList[userId]
       updateUserList()
+
+      // Update the video grid layout after a user disconnects
+      updateVideoGridLayout()
     }
   }
 })
@@ -560,13 +805,27 @@ socket.on('receive-private-message', messageData => {
 socket.on('user-list-update', users => {
   userList = users
   updateUserList()
+
+  // Update the video grid layout based on the number of users
+  updateVideoGridLayout()
 })
 
 myPeer.on('open', id => {
   console.log('My peer ID is:', id)
   myPeerId = id
+
+  // Store the peer ID for session persistence
+  sessionStorage.setItem('myPeerId', id)
+
   updateStatus('Connected to signaling server')
   socket.emit('join-room', ROOM_ID, id, myName)
+})
+
+// Handle page refresh/unload
+window.addEventListener('beforeunload', () => {
+  isRefreshing = true
+  // We don't remove the peer ID from sessionStorage here
+  // so it can be reused when the page refreshes
 })
 
 function connectToNewUser(userId, stream) {
@@ -578,21 +837,76 @@ function connectToNewUser(userId, stream) {
     peers[userId].close()
   }
 
-  const call = myPeer.call(userId, stream)
+  // Create video element in advance to reduce rendering delay
   const video = document.createElement('video')
   video.id = `video-${userId}`
 
+  // Optimize video element for lower latency
+  video.playsInline = true
+  video.autoplay = true
+  video.setAttribute('playsinline', 'true')
+  video.setAttribute('webkit-playsinline', 'true')
+
+  // Create a placeholder container while connection is being established
+  const container = document.createElement('div')
+  container.classList.add('video-container')
+  container.id = `container-${userId}`
+  container.classList.add('connecting')
+
+  // Add user name label
+  const userLabel = document.createElement('div')
+  userLabel.classList.add('user-name')
+  userLabel.textContent = `Connecting to ${userId.substring(0, 8)}...`
+  container.appendChild(userLabel)
+
+  // Add the container to the grid immediately to show connection is in progress
+  videoGrid.appendChild(container)
+
+  // Make the call with optimized options
+  const call = myPeer.call(userId, stream)
+
+  // Set up event handlers
   call.on('stream', userVideoStream => {
     console.log('Received stream from user:', userId)
     console.log('Stream tracks:', userVideoStream.getTracks().map(track => `${track.kind}: ${track.label} (${track.readyState})`))
 
+    // Remove the placeholder container
+    container.remove()
+
+    // Add the actual video stream
     addVideoStream(video, userVideoStream, userId)
     updateStatus(`Connected with user: ${userId.substring(0, 8)}...`)
+
+    // Optimize the peer connection if possible
+    if (call.peerConnection) {
+      // Set high priority for audio
+      call.peerConnection.getSenders().forEach(sender => {
+        if (sender.track && sender.track.kind === 'audio') {
+          const params = sender.getParameters();
+          if (params.encodings) {
+            params.encodings.forEach(encoding => {
+              encoding.priority = 'high';
+              encoding.networkPriority = 'high';
+            });
+            sender.setParameters(params).catch(e => console.error('Error setting priority:', e));
+          }
+        }
+      });
+
+      // Start network quality monitoring when we have an active connection
+      startNetworkMonitoring();
+    }
   })
 
   call.on('error', err => {
     console.error('Call error:', err)
     updateStatus(`Error connecting to user: ${err.message}`, true)
+
+    // Remove the placeholder on error
+    const placeholderContainer = document.getElementById(`container-${userId}`)
+    if (placeholderContainer) {
+      placeholderContainer.remove()
+    }
   })
 
   call.on('close', () => {
@@ -608,6 +922,41 @@ function connectToNewUser(userId, stream) {
 
 function addVideoStream(video, stream, userId = 'local') {
   console.log('Adding video stream for user:', userId)
+
+  // Check if a container for this user already exists
+  const existingContainer = document.getElementById(`container-${userId}`)
+
+  // If the container already exists and this isn't a local video,
+  // update the existing container instead of creating a new one
+  if (existingContainer && userId !== 'local') {
+    console.log('Updating existing video container for user:', userId)
+
+    // Find the video element in the container
+    const existingVideo = existingContainer.querySelector('video')
+    if (existingVideo) {
+      // Update the video stream
+      existingVideo.srcObject = stream
+
+      // Update the video grid layout
+      updateVideoGridLayout()
+      return
+    }
+  }
+
+  // Optimize video element for lower latency
+  video.playsInline = true // Prevent fullscreen on iOS
+  video.autoplay = true // Start playing as soon as possible
+  video.muted = userId === 'local' // Mute local video to prevent feedback
+
+  // Set low latency attributes
+  video.setAttribute('playsinline', 'true')
+  video.setAttribute('webkit-playsinline', 'true')
+
+  // Set video to low latency mode if supported
+  if ('lowLatency' in video) {
+    video.lowLatency = true
+  }
+
   video.srcObject = stream
 
   // Create a container for the video
@@ -659,4 +1008,7 @@ function addVideoStream(video, stream, userId = 'local') {
   // Add the container to the grid
   videoGrid.appendChild(container)
   console.log('Video container added to grid for user:', userId)
+
+  // Update the video grid layout
+  updateVideoGridLayout()
 }
