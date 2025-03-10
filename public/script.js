@@ -138,7 +138,7 @@ const myPeer = new Peer(storedPeerId, {
         credential: 'OBMhFfXVcHZWGkgO'
       }
     ],
-    iceTransportPolicy: 'all',
+    iceTransportPolicy: 'relay', // Force using TURN servers to ensure connectivity
     sdpSemantics: 'unified-plan',
     // Optimize for better connectivity rather than just low latency
     iceCandidatePoolSize: 10, // Increase candidate gathering speed
@@ -877,14 +877,32 @@ if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
     socket.on('user-connected', userId => {
       console.log('User connected:', userId)
       updateStatus('New user joined the room')
-      // Connect immediately to reduce latency
-      connectToNewUser(userId, stream)
 
-      // Set a timeout to automatically reconnect after 3 seconds when a new user joins
+      // Connect to the new user with a slight delay to ensure signaling is ready
       setTimeout(() => {
-        console.log('Auto-reconnecting after new user joined')
-        forceReconnect()
-      }, 3000)
+        connectToNewUser(userId, stream)
+      }, 1000)
+
+      // Set a timeout to automatically reconnect after 5 seconds if needed
+      // This helps establish connections in difficult network conditions
+      setTimeout(() => {
+        // Only reconnect if we don't already have a successful connection
+        const peerConnection = peers[userId]?.peerConnection;
+        const connectionState = peerConnection?.connectionState || peerConnection?.iceConnectionState;
+
+        if (!peerConnection || connectionState === 'failed' || connectionState === 'disconnected') {
+          console.log('Connection not established or in bad state, forcing reconnect')
+
+          // If we have a connection but it's in a bad state, close it first
+          if (peers[userId]) {
+            peers[userId].close();
+            delete peers[userId];
+          }
+
+          // Try connecting again
+          connectToNewUser(userId, stream);
+        }
+      }, 5000)
     })
 
     // Handle reconnection requests
@@ -1118,6 +1136,14 @@ function connectToNewUser(userId, stream) {
     peers[userId].close()
     delete peers[userId]
   }
+
+  // Add a small delay before connecting to ensure signaling is ready
+  setTimeout(() => {
+    initiateConnection(userId, stream)
+  }, 1000)
+}
+
+function initiateConnection(userId, stream) {
 
   // Create video element in advance to reduce rendering delay
   const video = document.createElement('video')
