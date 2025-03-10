@@ -90,6 +90,30 @@ app.get('/', (req, res) => {
   res.render('index')
 })
 
+// Debug endpoint to check room status
+app.get('/debug/rooms', (req, res) => {
+  const roomInfo = {};
+
+  // Collect information about each room
+  Object.keys(rooms).forEach(roomId => {
+    roomInfo[roomId] = {
+      userCount: Object.keys(rooms[roomId]).length,
+      users: Object.keys(rooms[roomId]).map(userId => ({
+        id: userId,
+        name: rooms[roomId][userId].name,
+        connected: rooms[roomId][userId].connected,
+        lastSeen: new Date(rooms[roomId][userId].lastSeen).toISOString()
+      }))
+    };
+  });
+
+  // Return room information as JSON
+  res.json({
+    activeRooms: Object.keys(rooms).length,
+    rooms: roomInfo
+  });
+});
+
 app.get('/:room', (req, res) => {
   // Validate room name to prevent security issues
   const roomName = req.params.room
@@ -129,6 +153,8 @@ io.on('connection', socket => {
     if (!rooms[roomId]) {
       rooms[roomId] = {}
       console.log(`Created new room: ${roomId}`)
+      console.log(`Total active rooms after creation: ${Object.keys(rooms).length}`)
+      console.log(`All active rooms: ${Object.keys(rooms).join(', ')}`)
     }
 
     // Check if this is a reconnection (user refreshed the page or reconnected)
@@ -221,6 +247,8 @@ io.on('connection', socket => {
           if (Object.keys(rooms[roomId]).length === 0) {
             delete rooms[roomId]
             console.log(`Room ${roomId} is now empty and has been removed`)
+            console.log(`Total active rooms after removal: ${Object.keys(rooms).length}`)
+            console.log(`Remaining active rooms: ${Object.keys(rooms).join(', ') || 'None'}`)
           }
 
           // Remove user session
