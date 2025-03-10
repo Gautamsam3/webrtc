@@ -404,6 +404,32 @@ body {
     height: 120px;
   }
 
+  /* Style for disconnected users */
+  .video-container.disconnected {
+    position: relative;
+    opacity: 0.7;
+    border: 2px solid #f44336;
+  }
+
+  .video-container.disconnected::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.5);
+    z-index: 5;
+    pointer-events: none;
+  }
+
+  .video-container.disconnected .user-name {
+    color: #f44336;
+    font-weight: bold;
+    background-color: rgba(0, 0, 0, 0.7);
+    z-index: 6;
+  }
+
   .video-container.local.fullscreen {
     position: fixed;
     top: 0;

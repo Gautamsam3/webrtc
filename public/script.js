@@ -1,8 +1,9 @@
-// Configure Socket.io with options for lower latency
+// Configure Socket.io with options for better reliability and lower latency
 const socket = io('/', {
-  transports: ['websocket'], // Use WebSocket only, skip long-polling
-  upgrade: false, // Disable transport upgrades
+  transports: ['websocket', 'polling'], // Allow fallback to polling if WebSocket fails
+  upgrade: true, // Allow transport upgrades
   reconnectionDelay: 1000, // Faster reconnection
+  reconnectionAttempts: 10, // More reconnection attempts
   timeout: 10000 // Shorter timeout
 })
 const videoGrid = document.getElementById('video-grid')
@@ -40,9 +41,26 @@ const myPeer = new Peer(storedPeerId, {
   debug: 3,
   config: {
     iceServers: [
+      // STUN servers
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun2.l.google.com:19302' }
+      { urls: 'stun:stun2.l.google.com:19302' },
+      // Free TURN servers (limited capacity but good for testing)
+      {
+        urls: 'turn:openrelay.metered.ca:80',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:443',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      }
     ],
     iceTransportPolicy: 'all',
     sdpSemantics: 'unified-plan',
@@ -117,11 +135,77 @@ function updateVideoGridLayout() {
   }
 }
 
-// Add error handling for PeerJS
+// Add enhanced error handling for PeerJS
 myPeer.on('error', (err) => {
   console.error('PeerJS error:', err)
-  updateStatus(`PeerJS error: ${err.type}`, true)
+
+  let errorMessage = `PeerJS error: ${err.type}`;
+
+  // Provide more specific error messages based on error type
+  switch(err.type) {
+    case 'peer-unavailable':
+      errorMessage = `Connection failed: The peer you're trying to connect to is not available. They may have left the room or have connection issues.`;
+      // Try to reconnect after a short delay
+      setTimeout(() => {
+        if (myPeerId && ROOM_ID) {
+          console.log('Attempting automatic reconnection after peer-unavailable error');
+          forceReconnect();
+        }
+      }, 5000);
+      break;
+    case 'network':
+      errorMessage = `Network error: Please check your internet connection.`;
+      break;
+    case 'server-error':
+      errorMessage = `Server error: The signaling server is experiencing issues. Please try again later.`;
+      break;
+    case 'browser-incompatible':
+      errorMessage = `Your browser may not fully support WebRTC. Please try using Chrome, Firefox, or Edge.`;
+      break;
+    case 'disconnected':
+      errorMessage = `Disconnected from signaling server. Attempting to reconnect...`;
+      // Try to reconnect to the signaling server
+      setTimeout(() => {
+        if (myPeerId && ROOM_ID) {
+          console.log('Attempting to reconnect to signaling server');
+          socket.emit('join-room', ROOM_ID, myPeerId, myName);
+        }
+      }, 2000);
+      break;
+  }
+
+  updateStatus(errorMessage, true);
 })
+
+// Add connection state monitoring
+function monitorPeerConnections() {
+  setInterval(() => {
+    Object.values(peers).forEach(call => {
+      if (call && call.peerConnection) {
+        const state = call.peerConnection.connectionState || call.peerConnection.iceConnectionState;
+        console.log(`Connection state with peer ${call.peer}: ${state}`);
+
+        // If connection is failed, try to reconnect
+        if (state === 'failed' || state === 'disconnected') {
+          console.log(`Connection with peer ${call.peer} is ${state}, attempting to reconnect`);
+          // Close the failed connection
+          call.close();
+          delete peers[call.peer];
+
+          // Try to reconnect if we have a stream
+          if (myStream) {
+            setTimeout(() => {
+              connectToNewUser(call.peer, myStream);
+            }, 2000);
+          }
+        }
+      }
+    });
+  }, 10000); // Check every 10 seconds
+}
+
+// Start monitoring peer connections
+monitorPeerConnections();
 
 // Setup control buttons
 videoToggleBtn.addEventListener('click', toggleVideo)
@@ -178,19 +262,46 @@ function updateUserList() {
     recipientSelect.remove(1)
   }
 
-  // Add all connected users except ourselves
+  // Add all users except ourselves
   Object.keys(userList).forEach(userId => {
     if (userId !== myPeerId) {
-      const option = document.createElement('option')
-      option.value = userId
-      option.textContent = userList[userId].name || `User ${userId.substring(0, 8)}...`
-      recipientSelect.appendChild(option)
+      const user = userList[userId];
+      const option = document.createElement('option');
+      option.value = userId;
+
+      // Show connection status in the user list
+      const connectionStatus = user.connected === false ? ' (disconnected)' : '';
+      option.textContent = (user.name || `User ${userId.substring(0, 8)}...`) + connectionStatus;
+
+      // Disable selecting disconnected users for private messages
+      if (user.connected === false) {
+        option.disabled = true;
+      }
+
+      recipientSelect.appendChild(option);
+
+      // Update video container labels if they exist
+      const userContainer = document.getElementById(`container-${userId}`);
+      if (userContainer) {
+        const nameLabel = userContainer.querySelector('.user-name');
+        if (nameLabel) {
+          const userName = user.name || `User ${userId.substring(0, 8)}...`;
+          nameLabel.textContent = userName + connectionStatus;
+
+          // Add visual indication for disconnected users
+          if (user.connected === false) {
+            userContainer.classList.add('disconnected');
+          } else {
+            userContainer.classList.remove('disconnected');
+          }
+        }
+      }
     }
-  })
+  });
 
   // Reset selection when user list changes
-  recipientSelect.value = ''
-  selectedRecipient = null
+  recipientSelect.value = '';
+  selectedRecipient = null;
 }
 
 recipientSelect.addEventListener('change', () => {

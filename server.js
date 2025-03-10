@@ -42,7 +42,9 @@ if (isProduction) {
     path: '/peerjs',
     proxied: true,
     port: 443, // This is ignored when using the Express integration
-    server: server // Use the same server instance
+    server: server, // Use the same server instance
+    debug: true,
+    allow_discovery: true
   });
   console.log('PeerServer integrated with main server in production mode');
 } else {
@@ -52,6 +54,8 @@ if (isProduction) {
       port: 3002,
       path: '/',
       proxied: true,
+      debug: true,
+      allow_discovery: true,
       ssl: {
         key: fs.readFileSync('ssl/key.pem'),
         cert: fs.readFileSync('ssl/cert.pem')
@@ -63,7 +67,9 @@ if (isProduction) {
     peerServer = PeerServer({
       port: 3002,
       path: '/',
-      proxied: true
+      proxied: true,
+      debug: true,
+      allow_discovery: true
     });
     console.log('PeerServer running in development mode on port 3002');
   }
@@ -124,7 +130,8 @@ io.on('connection', socket => {
       id: userId,
       name: userName || `User ${userId.substring(0, 8)}...`,
       socketId: socket.id,
-      lastSeen: Date.now()
+      lastSeen: Date.now(),
+      connected: true
     }
 
     // Track user session
@@ -137,65 +144,87 @@ io.on('connection', socket => {
     // Join the socket room
     socket.join(roomId)
 
-    // Only notify others if this is not a reconnection (refresh)
-    if (!isReconnection) {
-      // Notify others that user connected
-      socket.to(roomId).emit('user-connected', userId)
-    }
+    // Notify others that user connected, even on reconnection
+    // This ensures peers always try to establish connections
+    socket.to(roomId).emit('user-connected', userId)
 
     // Send updated user list to all clients in the room
     io.to(roomId).emit('user-list-update', rooms[roomId])
 
+    // Log active users in the room
+    console.log(`Active users in room ${roomId}:`, Object.keys(rooms[roomId]).length)
+
     socket.on('disconnect', () => {
       console.log(`User ${userId} disconnected from room ${roomId}`)
 
-      // Mark the user's last seen time
+      // Mark the user as temporarily disconnected but don't remove yet
       if (rooms[roomId] && rooms[roomId][userId]) {
-        rooms[roomId][userId].lastSeen = Date.now()
+        rooms[roomId][userId].connected = false;
+        rooms[roomId][userId].lastSeen = Date.now();
+
+        // Immediately update the user list to show disconnected status
+        io.to(roomId).emit('user-list-update', rooms[roomId]);
       }
 
       if (userSessions[userId]) {
-        userSessions[userId].lastSeen = Date.now()
+        userSessions[userId].lastSeen = Date.now();
       }
 
-      // Set a timeout to check if the user reconnects (e.g., refreshed the page)
+      // Set a longer timeout to check if the user reconnects
       setTimeout(() => {
         // If the user hasn't reconnected within the timeout period
-        if (userSessions[userId] &&
-          userSessions[userId].lastSeen === rooms[roomId]?.[userId]?.lastSeen) {
+        if (rooms[roomId] && rooms[roomId][userId] &&
+            !rooms[roomId][userId].connected &&
+            userSessions[userId] &&
+            userSessions[userId].lastSeen === rooms[roomId][userId].lastSeen) {
 
-          console.log(`User ${userId} did not reconnect, removing from room ${roomId}`)
+          console.log(`User ${userId} did not reconnect after 10 seconds, removing from room ${roomId}`);
 
           // Remove user from room
-          if (rooms[roomId] && rooms[roomId][userId]) {
-            delete rooms[roomId][userId]
+          delete rooms[roomId][userId];
 
-            // Clean up empty rooms
-            if (Object.keys(rooms[roomId]).length === 0) {
-              delete rooms[roomId]
-            }
+          // Clean up empty rooms
+          if (Object.keys(rooms[roomId]).length === 0) {
+            delete rooms[roomId];
+            console.log(`Room ${roomId} is now empty and has been removed`);
           }
 
           // Remove user session
-          delete userSessions[userId]
+          delete userSessions[userId];
 
           // Notify others that user disconnected
-          socket.to(roomId).emit('user-disconnected', userId)
+          io.to(roomId).emit('user-disconnected', userId);
 
           // Send updated user list
           if (rooms[roomId]) {
-            io.to(roomId).emit('user-list-update', rooms[roomId])
+            io.to(roomId).emit('user-list-update', rooms[roomId]);
           }
         }
-      }, 5000) // 5 second timeout to detect if this is a refresh or a true disconnect
-    })
+      }, 10000); // 10 second timeout to detect if this is a refresh or a true disconnect
+    });
   })
 
   // Handle force reconnect requests
   socket.on('force-reconnect', (roomId, userId) => {
-    console.log(`User ${userId} requested force reconnect in room ${roomId}`)
+    console.log(`User ${userId} requested force reconnect in room ${roomId}`);
+
+    // Mark the user as connected if they were previously disconnected
+    if (rooms[roomId] && rooms[roomId][userId]) {
+      rooms[roomId][userId].connected = true;
+      rooms[roomId][userId].lastSeen = Date.now();
+    }
+
     // Notify all other users in the room to reconnect to this user
-    socket.to(roomId).emit('user-reconnect-request', userId)
+    socket.to(roomId).emit('user-reconnect-request', userId);
+
+    // Send updated user list to all clients in the room
+    io.to(roomId).emit('user-list-update', rooms[roomId]);
+
+    // Log reconnection attempt
+    console.log(`Force reconnect initiated for user ${userId} in room ${roomId}`);
+    console.log(`Current users in room:`, Object.keys(rooms[roomId] || {}).map(id =>
+      `${id} (${rooms[roomId][id].connected ? 'connected' : 'disconnected'})`
+    ));
   })
 
   // Handle group chat messages
