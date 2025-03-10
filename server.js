@@ -189,5 +189,5 @@ const PORT = process.env.PORT || 3000 // Dynamic port handling
 server.listen(PORT, () => {
   console.log(`HTTPS Server running on port ${PORT}`)
   const IP = process.env.RENDER_EXTERNAL_URL || 'localhost'
-  console.log(`To connect from another device, use: https://${IP}:${PORT}`)
+  console.log(`To connect from another device, use: ${IP}:${PORT}`)
 })
