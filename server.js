@@ -1,7 +1,9 @@
+require('dotenv').config()
 const express = require('express')
 const app = express()
 const fs = require('fs')
 const https = require('https')
+const path = require('path')
 
 // SSL certificates for HTTPS
 const options = {
@@ -19,12 +21,11 @@ const { PeerServer } = require('peer')
 const peerServer = PeerServer({
   port: 3002,
   path: '/',
-  host: '0.0.0.0',
+  proxied: true, // Ye proxy issue fix karega
   ssl: {
     key: fs.readFileSync('ssl/key.pem'),
     cert: fs.readFileSync('ssl/cert.pem')
-  },
-  debug: true
+  }
 })
 
 peerServer.on('connection', (client) => {
@@ -38,7 +39,7 @@ peerServer.on('disconnect', (client) => {
 console.log('PeerServer running on port 3002 with HTTPS')
 
 app.set('view engine', 'ejs')
-app.use(express.static('public'))
+app.use(express.static(path.join(__dirname, 'public')))
 
 app.get('/', (req, res) => {
   res.render('index')
@@ -122,7 +123,7 @@ io.on('connection', socket => {
       setTimeout(() => {
         // If the user hasn't reconnected within the timeout period
         if (userSessions[userId] &&
-            userSessions[userId].lastSeen === rooms[roomId]?.[userId]?.lastSeen) {
+          userSessions[userId].lastSeen === rooms[roomId]?.[userId]?.lastSeen) {
 
           console.log(`User ${userId} did not reconnect, removing from room ${roomId}`)
 
@@ -184,8 +185,9 @@ io.on('connection', socket => {
   })
 })
 
-server.listen(3000, '0.0.0.0', () => {
-  console.log('HTTPS Server running on port 3000')
-  console.log('To connect from another device, use the following URL:')
-  console.log('https://192.168.165.151:3000')
+const PORT = process.env.PORT || 3000 // Dynamic port handling
+server.listen(PORT, () => {
+  console.log(`HTTPS Server running on port ${PORT}`)
+  const IP = process.env.RENDER_EXTERNAL_URL || 'localhost'
+  console.log(`To connect from another device, use: https://${IP}:${PORT}`)
 })
