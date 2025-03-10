@@ -105,7 +105,7 @@ function createPeer(peerId) {
   return new Peer(peerId, {
     host: window.location.hostname,
     port: window.location.port || (window.location.protocol === 'https:' ? 443 : 80),
-    path: '/', // Use root path to avoid path duplication issues
+    path: '/peerjs', // Match the server's mount path
     secure: window.location.protocol === 'https:', // Use HTTPS if the page is loaded over HTTPS
     debug: 3,
     pingInterval: 3000, // Ping even more frequently to detect connection issues earlier
