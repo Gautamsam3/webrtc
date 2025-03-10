@@ -97,6 +97,8 @@ const myPeer = new Peer(storedPeerId, {
   path: '/peerjs', // Always use /peerjs path for consistency with server
   secure: window.location.protocol === 'https:', // Use HTTPS if the page is loaded over HTTPS
   debug: 3,
+  pingInterval: 5000, // Ping more frequently to detect connection issues earlier
+  reconnectTimer: 1000, // Faster reconnection attempts
   config: {
     iceServers: [
       // STUN servers - multiple options for better connectivity
@@ -138,7 +140,7 @@ const myPeer = new Peer(storedPeerId, {
         credential: 'OBMhFfXVcHZWGkgO'
       }
     ],
-    iceTransportPolicy: 'relay', // Force using TURN servers to ensure connectivity
+    iceTransportPolicy: 'all', // Try direct connections first, fall back to TURN servers
     sdpSemantics: 'unified-plan',
     // Optimize for better connectivity rather than just low latency
     iceCandidatePoolSize: 10, // Increase candidate gathering speed
@@ -216,42 +218,193 @@ myPeer.on('error', (err) => {
   console.error('PeerJS error:', err)
 
   let errorMessage = `PeerJS error: ${err.type}`;
+  let shouldAttemptReconnect = true;
 
   // Provide more specific error messages based on error type
   switch(err.type) {
     case 'peer-unavailable':
       errorMessage = `Connection failed: The peer you're trying to connect to is not available. They may have left the room or have connection issues.`;
-      // Try to reconnect after a short delay
-      setTimeout(() => {
-        if (myPeerId && ROOM_ID) {
-          console.log('Attempting automatic reconnection after peer-unavailable error');
-          forceReconnect();
-        }
-      }, 5000);
       break;
     case 'network':
-      errorMessage = `Network error: Please check your internet connection.`;
+      errorMessage = `Network error: Connection to the signaling server was lost. Attempting to reconnect...`;
+      // Try switching to a different ICE transport policy if we're having network issues
+      if (myPeer.options.config.iceTransportPolicy === 'all') {
+        console.log('Switching to relay-only ICE policy for more reliable connections');
+        myPeer.options.config.iceTransportPolicy = 'relay';
+      }
       break;
     case 'server-error':
-      errorMessage = `Server error: The signaling server is experiencing issues. Please try again later.`;
+      errorMessage = `Server error: The signaling server is experiencing issues. Attempting to reconnect...`;
       break;
     case 'browser-incompatible':
       errorMessage = `Your browser may not fully support WebRTC. Please try using Chrome, Firefox, or Edge.`;
+      shouldAttemptReconnect = false;
       break;
     case 'disconnected':
       errorMessage = `Disconnected from signaling server. Attempting to reconnect...`;
-      // Try to reconnect to the signaling server
-      setTimeout(() => {
-        if (myPeerId && ROOM_ID) {
-          console.log('Attempting to reconnect to signaling server');
-          socket.emit('join-room', ROOM_ID, myPeerId, myName);
-        }
-      }, 2000);
       break;
+    case 'socket-error':
+      errorMessage = `Socket connection error. Attempting to reconnect...`;
+      break;
+    case 'socket-closed':
+      errorMessage = `Socket connection closed. Attempting to reconnect...`;
+      break;
+    case 'unavailable-id':
+      errorMessage = `The ID ${myPeerId} is already taken. Generating a new ID...`;
+      // Clear the stored peer ID so we get a new one
+      sessionStorage.removeItem('myPeerId');
+      break;
+    default:
+      errorMessage = `Connection error (${err.type}). Attempting to reconnect...`;
   }
 
   updateStatus(errorMessage, true);
+
+  // Attempt to reconnect for most error types
+  if (shouldAttemptReconnect) {
+    console.log(`Scheduling reconnection attempt in 5 seconds due to ${err.type} error`);
+
+    // Wait a bit before trying to reconnect
+    setTimeout(() => {
+      if (myPeerId && ROOM_ID) {
+        console.log('Attempting automatic reconnection after PeerJS error');
+
+        // For network-related errors, try a full reconnection
+        if (err.type === 'network' || err.type === 'disconnected' ||
+            err.type === 'socket-error' || err.type === 'socket-closed' ||
+            err.type === 'server-error') {
+
+          // Destroy the current peer connection
+          if (myPeer) {
+            console.log('Destroying current peer connection');
+            myPeer.destroy();
+          }
+
+          // Create a new peer with the same ID (or a new one if unavailable-id)
+          console.log('Creating new peer connection');
+          const newPeerId = err.type === 'unavailable-id' ? undefined : myPeerId;
+
+          // Recreate the peer with the same options
+          myPeer = new Peer(newPeerId, myPeer.options);
+
+          // Set up all the event handlers again
+          setupPeerEventHandlers();
+
+          // The 'open' event handler will rejoin the room when the connection is established
+        } else {
+          // For other errors, just try to reconnect to the room
+          forceReconnect();
+        }
+      }
+    }, 5000);
+  }
 })
+
+// Function to set up all peer event handlers
+function setupPeerEventHandlers() {
+  // Re-add the error handler
+  myPeer.on('error', (err) => {
+    console.error('PeerJS error in new connection:', err);
+    // We don't want to create an infinite loop of error handling,
+    // so we'll just log this error but not try to reconnect again immediately
+    updateStatus(`Connection error: ${err.type}. Please try refreshing the page if issues persist.`, true);
+  });
+
+  // Re-add the open handler
+  myPeer.on('open', id => {
+    console.log('PeerJS connection successful! My peer ID is:', id);
+    myPeerId = id;
+
+    // Store the peer ID for session persistence
+    sessionStorage.setItem('myPeerId', id);
+
+    // Log connection details
+    console.log('PeerJS connection details:', {
+      host: myPeer.options.host,
+      port: myPeer.options.port,
+      path: myPeer.options.path,
+      secure: myPeer.options.secure,
+      iceTransportPolicy: myPeer.options.config.iceTransportPolicy
+    });
+
+    updateStatus('Connected to signaling server');
+    socket.emit('join-room', ROOM_ID, id, myName);
+  });
+
+  // Re-add the connection handler
+  myPeer.on('connection', (conn) => {
+    console.log('Incoming peer data connection:', conn.peer);
+
+    conn.on('open', () => {
+      console.log('Peer data connection opened with:', conn.peer);
+    });
+
+    // Handle data messages from peers
+    conn.on('data', (data) => {
+      console.log('Received data from peer:', data);
+
+      // Handle ready-for-call message
+      if (data.type === 'ready-for-call') {
+        console.log(`Peer ${conn.peer} is ready for call`);
+
+        // If we're not already connected to this peer and we have a stream, initiate a call
+        if (!peers[conn.peer] && myStream) {
+          console.log(`Initiating call to ${conn.peer} after receiving ready signal`);
+
+          // Small delay to ensure both sides are ready
+          setTimeout(() => {
+            const call = myPeer.call(conn.peer, myStream);
+
+            // Store the call in peers
+            if (call) {
+              peers[conn.peer] = call;
+              console.log(`Call initiated to ${conn.peer}`);
+            }
+          }, 500);
+        }
+      }
+    });
+
+    conn.on('error', (err) => {
+      console.error('Peer data connection error with ' + conn.peer + ':', err);
+    });
+  });
+
+  // Re-add the call handler
+  myPeer.on('call', call => {
+    if (myStream) {
+      const peerId = call.peer;
+      console.log('Received call from:', peerId);
+      updateStatus('Someone is connecting...');
+
+      // Answer the call with our stream
+      call.answer(myStream);
+
+      // Create a video element for the remote stream
+      const video = document.createElement('video');
+      video.id = `remote-video`;
+
+      // Handle the incoming stream
+      call.on('stream', userVideoStream => {
+        console.log('Received stream from call:', peerId);
+        console.log('Stream tracks:', userVideoStream.getTracks().map(track =>
+          `${track.kind}: ${track.label} (${track.readyState})`));
+
+        addVideoStream(video, userVideoStream, peerId);
+        updateStatus('Connected with another user');
+      });
+
+      // Handle errors
+      call.on('error', err => {
+        console.error('Call error:', err);
+        updateStatus(`Error in call: ${err.message}`, true);
+      });
+
+      // Store the call in peers
+      peers[peerId] = call;
+    }
+  });
+}
 
 // Add connection state monitoring
 function monitorPeerConnections() {
