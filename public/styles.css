@@ -296,6 +296,99 @@ body {
     width: auto;
   }
 
+  /* Low bandwidth mode button */
+  #low-bandwidth-mode {
+    background-color: #FF9800;
+    position: relative;
+  }
+
+  #low-bandwidth-mode.active {
+    background-color: #f44336;
+  }
+
+  /* Pulse animation for low-bandwidth mode button */
+  @keyframes pulse-animation {
+    0% {
+      box-shadow: 0 0 0 0 rgba(255, 152, 0, 0.7);
+    }
+    70% {
+      box-shadow: 0 0 0 10px rgba(255, 152, 0, 0);
+    }
+    100% {
+      box-shadow: 0 0 0 0 rgba(255, 152, 0, 0);
+    }
+  }
+
+  #low-bandwidth-mode.pulse {
+    animation: pulse-animation 1.5s infinite;
+  }
+
+  #low-bandwidth-mode .tooltip {
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 5px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    white-space: nowrap;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s, visibility 0.3s;
+    margin-bottom: 10px;
+  }
+
+  #low-bandwidth-mode:hover .tooltip {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  /* Connection quality indicator */
+  .connection-quality {
+    position: fixed;
+    bottom: 100px;
+    left: 20px;
+    background-color: rgba(0, 0, 0, 0.6);
+    padding: 5px;
+    border-radius: 20px;
+    z-index: 90;
+    display: flex;
+    align-items: center;
+  }
+
+  .quality-indicator {
+    width: 100px;
+    height: 10px;
+    background-color: rgba(255, 255, 255, 0.2);
+    border-radius: 5px;
+    overflow: hidden;
+  }
+
+  .quality-bar {
+    height: 100%;
+    width: 70%; /* Default medium quality */
+    background-color: #4CAF50; /* Green for good quality */
+    transition: width 0.5s, background-color 0.5s;
+  }
+
+  /* Quality states */
+  .quality-low .quality-bar {
+    width: 30%;
+    background-color: #f44336; /* Red for poor quality */
+  }
+
+  .quality-medium .quality-bar {
+    width: 70%;
+    background-color: #FF9800; /* Orange for medium quality */
+  }
+
+  .quality-high .quality-bar {
+    width: 100%;
+    background-color: #4CAF50; /* Green for good quality */
+  }
+
   #status-message {
     position: absolute;
     top: 20px;

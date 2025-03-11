@@ -3,7 +3,9 @@ const socket = io('/', {
   transports: ['websocket'], // Use WebSocket only, skip long-polling
   upgrade: false, // Disable transport upgrades
   reconnectionDelay: 1000, // Faster reconnection
-  timeout: 10000 // Shorter timeout
+  timeout: 10000, // Shorter timeout
+  reconnectionAttempts: 10, // More reconnection attempts
+  reconnectionDelayMax: 5000 // Cap on reconnection delay
 })
 const videoGrid = document.getElementById('video-grid')
 const statusMessage = document.getElementById('status-message')
@@ -12,6 +14,8 @@ const audioToggleBtn = document.getElementById('audio-toggle')
 const screenShareBtn = document.getElementById('screen-share')
 const reconnectBtn = document.getElementById('reconnect-btn')
 const disconnectBtn = document.getElementById('disconnect-btn')
+const lowBandwidthBtn = document.getElementById('low-bandwidth-mode')
+const connectionQualityIndicator = document.getElementById('connection-quality')
 
 // Chat elements
 const chatToggle = document.getElementById('chat-toggle')
@@ -109,6 +113,7 @@ let networkQuality = 'medium' // 'low', 'medium', 'high'
 let lastBitrateCheck = Date.now()
 let bitrateCheckInterval = null
 let lastBytes = 0
+let isLowBandwidthMode = false // Track if low-bandwidth mode is enabled
 
 // Update status message
 function updateStatus(message, isError = false) {
@@ -142,6 +147,85 @@ audioToggleBtn.addEventListener('click', toggleAudio)
 screenShareBtn.addEventListener('click', toggleScreenShare)
 reconnectBtn.addEventListener('click', forceReconnect)
 disconnectBtn.addEventListener('click', disconnect)
+
+// Setup low-bandwidth mode if the button exists
+if (lowBandwidthBtn) {
+  lowBandwidthBtn.addEventListener('click', toggleLowBandwidthMode)
+}
+
+// Toggle low-bandwidth mode
+function toggleLowBandwidthMode() {
+  isLowBandwidthMode = !isLowBandwidthMode
+
+  // Save setting to localStorage so it persists between sessions
+  localStorage.setItem('lowBandwidthMode', isLowBandwidthMode)
+
+  if (lowBandwidthBtn) {
+    lowBandwidthBtn.classList.toggle('active', isLowBandwidthMode)
+  }
+
+  if (isLowBandwidthMode) {
+    updateStatus('Low-bandwidth mode enabled. Optimizing for poor connections...')
+
+    // Apply low-bandwidth optimizations
+    applyLowBandwidthOptimizations()
+  } else {
+    updateStatus('Low-bandwidth mode disabled. Using normal quality settings.')
+
+    // Restore normal quality based on network conditions
+    adjustVideoQuality(networkQuality)
+  }
+}
+
+// Apply optimizations for low-bandwidth mode
+async function applyLowBandwidthOptimizations() {
+  if (!myStream) return
+
+  const videoTrack = myStream.getVideoTracks()[0]
+  if (!videoTrack) return
+
+  try {
+    // Apply very low video constraints
+    const constraints = {
+      width: { ideal: 160, max: 320 },
+      height: { ideal: 120, max: 240 },
+      frameRate: { ideal: 10, max: 15 }
+    }
+
+    // Apply constraints to the video track
+    await videoTrack.applyConstraints(constraints)
+
+    // Update video bitrates in all peer connections to very low values
+    Object.values(peers).forEach(call => {
+      if (call.peerConnection) {
+        const sender = call.peerConnection.getSenders().find(s =>
+          s.track && s.track.kind === 'video'
+        )
+
+        if (sender) {
+          const params = sender.getParameters()
+          if (!params.encodings) {
+            params.encodings = [{}]
+          }
+
+          // Set very low bitrate (150 Kbps)
+          params.encodings[0].maxBitrate = 150000
+
+          // Prioritize audio even more
+          params.encodings[0].networkPriority = 'very-low'
+
+          sender.setParameters(params).catch(e =>
+            console.error('Error setting low-bandwidth video parameters:', e)
+          )
+        }
+      }
+    })
+
+    console.log('Applied low-bandwidth optimizations:', constraints)
+  } catch (e) {
+    console.error('Error applying low-bandwidth optimizations:', e)
+  }
+}
 
 // Setup chat UI
 chatToggle.addEventListener('click', () => {
@@ -558,8 +642,13 @@ function startNetworkMonitoring() {
         console.log(`Network quality changed to: ${networkQuality}`)
         updateStatus(`Network quality: ${networkQuality.toUpperCase()}`)
 
+        // Update connection quality indicator
+        updateConnectionQualityIndicator(networkQuality)
+
         // Adjust video quality based on network conditions
-        adjustVideoQuality(networkQuality)
+        if (!isLowBandwidthMode) {
+          adjustVideoQuality(networkQuality)
+        }
       }
     } catch (e) {
       console.error('Error getting connection stats:', e)
@@ -644,7 +733,20 @@ if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
 
   // Get initial video constraints based on estimated network quality
   const getInitialVideoConstraints = () => {
-    // Start with medium quality by default
+    // Check if low-bandwidth mode is enabled (from localStorage)
+    const savedLowBandwidthMode = localStorage.getItem('lowBandwidthMode') === 'true'
+    isLowBandwidthMode = savedLowBandwidthMode
+
+    // If low-bandwidth mode is enabled, use very low quality
+    if (isLowBandwidthMode) {
+      return {
+        width: { ideal: 160, max: 320 },
+        height: { ideal: 120, max: 240 },
+        frameRate: { ideal: 10, max: 15 }
+      }
+    }
+
+    // Otherwise, start with medium quality by default
     return {
       width: { ideal: 640 },
       height: { ideal: 480 },
@@ -828,12 +930,42 @@ socket.on('user-list-update', users => {
   updateVideoGridLayout()
 })
 
+// Update connection quality indicator
+function updateConnectionQualityIndicator(quality) {
+  if (!connectionQualityIndicator) return
+
+  // Remove all quality classes
+  connectionQualityIndicator.classList.remove('quality-low', 'quality-medium', 'quality-high')
+
+  // Add the appropriate quality class
+  connectionQualityIndicator.classList.add(`quality-${quality}`)
+
+  // Update the low bandwidth button state based on quality
+  if (lowBandwidthBtn && quality === 'low' && !isLowBandwidthMode) {
+    // Suggest low bandwidth mode if quality is poor
+    lowBandwidthBtn.classList.add('pulse')
+    setTimeout(() => {
+      lowBandwidthBtn.classList.remove('pulse')
+    }, 5000)
+  }
+}
+
 myPeer.on('open', id => {
   console.log('My peer ID is:', id)
   myPeerId = id
 
   // Store the peer ID for session persistence
   sessionStorage.setItem('myPeerId', id)
+
+  // Set initial state of low bandwidth mode button
+  if (lowBandwidthBtn && isLowBandwidthMode) {
+    lowBandwidthBtn.classList.add('active')
+  }
+
+  // Set initial state of connection quality indicator
+  if (connectionQualityIndicator) {
+    updateConnectionQualityIndicator('medium') // Start with medium quality
+  }
 
   updateStatus('Connected to signaling server')
   socket.emit('join-room', ROOM_ID, id, myName)
