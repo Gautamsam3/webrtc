@@ -10,8 +10,6 @@ services:
         value: production
       - key: PORT
         value: 10000
-      - key: PEER_PORT
-        value: 443
       - key: HOST
         fromService:
           name: rexmeet

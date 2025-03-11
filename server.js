@@ -7,7 +7,6 @@ require('dotenv').config()
 
 // Environment variables
 const PORT = process.env.PORT || 3000
-const PEER_PORT = process.env.PEER_PORT || 3002
 const NODE_ENV = process.env.NODE_ENV || 'development'
 const HOST = process.env.HOST || 'localhost'
 
@@ -32,17 +31,17 @@ const io = require('socket.io')(server)
 const { v4: uuidV4 } = require('uuid')
 const { PeerServer } = require('peer')
 
-// Create a separate PeerServer with appropriate configuration
+// Integrate PeerServer with Express instead of running on a separate port
 const peerServer = PeerServer({
-  port: PEER_PORT,
-  path: '/',
-  host: '0.0.0.0',
+  port: PORT, // Use the same port as Express
+  path: '/peerjs', // Use a specific path to avoid conflicts
+  proxied: true, // Enable this if behind a proxy
   ssl: isProduction ? undefined : {
     key: fs.readFileSync('ssl/key.pem'),
     cert: fs.readFileSync('ssl/cert.pem')
   },
   debug: true
-})
+});
 
 peerServer.on('connection', (client) => {
   console.log('PeerJS client connected:', client.getId())
@@ -52,7 +51,7 @@ peerServer.on('disconnect', (client) => {
   console.log('PeerJS client disconnected:', client.getId())
 })
 
-console.log(`PeerServer running on port ${PEER_PORT} with ${isProduction ? 'HTTP' : 'HTTPS'}`)
+console.log(`PeerServer integrated with Express on port ${PORT} with ${isProduction ? 'HTTP' : 'HTTPS'}`)
 
 app.set('view engine', 'ejs')
 app.use(express.static('public'))

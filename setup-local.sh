@@ -16,7 +16,6 @@ if [ ! -f .env ]; then
     echo "Creating .env file for local development..."
     cat > .env << EOL
 PORT=3000
-PEER_PORT=3002
 NODE_ENV=development
 HOST=localhost
 EOL
