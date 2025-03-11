@@ -7,6 +7,7 @@ require('dotenv').config()
 
 // Environment variables
 const PORT = process.env.PORT || 3000
+const PEER_PORT = process.env.PEER_PORT || 3002
 const NODE_ENV = process.env.NODE_ENV || 'development'
 const HOST = process.env.HOST || 'localhost'
 
@@ -31,17 +32,45 @@ const io = require('socket.io')(server)
 const { v4: uuidV4 } = require('uuid')
 const { PeerServer } = require('peer')
 
-// Integrate PeerServer with Express instead of running on a separate port
+// Get TURN server credentials from environment variables
+const TURN_SERVER_URL = process.env.TURN_SERVER_URL || 'turn:numb.viagenie.ca'
+const TURN_USERNAME = process.env.TURN_USERNAME || 'webrtc@live.com'
+const TURN_PASSWORD = process.env.TURN_PASSWORD || 'muazkh'
+
+// Integrate PeerJS with Express instead of running it separately
 const peerServer = PeerServer({
-  port: PORT, // Use the same port as Express
-  path: '/peerjs', // Use a specific path to avoid conflicts
-  proxied: true, // Enable this if behind a proxy
+  port: isProduction ? undefined : PEER_PORT, // In production, don't specify port to use Express's port
+  path: '/peerjs', // Use a specific path for PeerJS
+  host: '0.0.0.0',
   ssl: isProduction ? undefined : {
     key: fs.readFileSync('ssl/key.pem'),
     cert: fs.readFileSync('ssl/cert.pem')
   },
-  debug: true
-});
+  proxied: isProduction, // Important for Render deployment
+  debug: true,
+  config: {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      {
+        urls: TURN_SERVER_URL,
+        username: TURN_USERNAME,
+        credential: TURN_PASSWORD
+      }
+    ]
+  }
+})
+
+// If in production, mount PeerJS on the Express app
+if (isProduction) {
+  app.use('/peerjs', require('peer').ExpressPeerServer(server, {
+    debug: true,
+    proxied: true
+  }));
+  console.log(`PeerServer integrated with Express on path /peerjs`)
+} else {
+  console.log(`PeerServer running on port ${PEER_PORT} with ${isProduction ? 'HTTP' : 'HTTPS'}`)
+}
 
 peerServer.on('connection', (client) => {
   console.log('PeerJS client connected:', client.getId())
@@ -50,8 +79,6 @@ peerServer.on('connection', (client) => {
 peerServer.on('disconnect', (client) => {
   console.log('PeerJS client disconnected:', client.getId())
 })
-
-console.log(`PeerServer integrated with Express on port ${PORT} with ${isProduction ? 'HTTP' : 'HTTPS'}`)
 
 app.set('view engine', 'ejs')
 app.use(express.static('public'))

@@ -15,4 +15,8 @@ services:
           name: rexmeet
           type: web
           property: host
-    healthCheckPath: /
+      # TURN server credentials for WebRTC
+    routes:
+      - type: rewrite
+        source: /peerjs/*
+        destination: /peerjs/$1

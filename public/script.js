@@ -30,15 +30,14 @@ const storedPeerId = sessionStorage.getItem('myPeerId')
 
 // Get environment configuration
 const isSecure = window.location.protocol === 'https:';
-const peerPort = window.location.hostname === 'localhost' ||
-                 window.location.hostname === '127.0.0.1' ?
-                 '3000' : '443'; // Use same port as Express server in local development
+const isLocalhost = window.location.hostname === 'localhost' ||
+                    window.location.hostname === '127.0.0.1';
 
 // Create Peer connection with appropriate configuration
 const myPeer = new Peer(storedPeerId, {
   host: window.location.hostname,
-  port: peerPort,
-  path: '/peerjs', // Use /peerjs path for both local and production
+  port: isLocalhost ? '3002' : '443', // Use 443 in production
+  path: '/peerjs', // Use the path we configured on the server
   secure: isSecure,
   debug: 3,
   config: {
