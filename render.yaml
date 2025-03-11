@@ -1,5 +1,6 @@
 # Render deployment configuration
 services:
+  # Main web application
   - type: web
     name: rexmeet
     env: node
@@ -10,13 +11,29 @@ services:
         value: production
       - key: PORT
         value: 10000
+      - key: PEER_PORT
+        value: 10001
       - key: HOST
         fromService:
           name: rexmeet
           type: web
           property: host
       # TURN server credentials for WebRTC
-    routes:
-      - type: rewrite
-        source: /peerjs/*
-        destination: /peerjs/$1
+
+  # Separate PeerJS server
+  - type: web
+    name: rexmeet-peerjs
+    env: node
+    buildCommand: npm install
+    startCommand: node peerServer.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PEER_PORT
+        value: 10001
+      - key: HOST
+        fromService:
+          name: rexmeet-peerjs
+          type: web
+          property: host
+      # TURN server credentials for WebRTC

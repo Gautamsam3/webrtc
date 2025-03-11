@@ -5,6 +5,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
+    "peer": "node peerServer.js",
+    "dev-all": "./run-dev.sh",
     "generate-ssl": "./generate-ssl.sh",
     "deploy-heroku": "./deploy-heroku.sh",
     "build": "./setup-local.sh"

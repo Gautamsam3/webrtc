@@ -33,12 +33,12 @@ const isSecure = window.location.protocol === 'https:';
 const isLocalhost = window.location.hostname === 'localhost' ||
                     window.location.hostname === '127.0.0.1';
 
-// Create Peer connection with appropriate configuration
+// Create Peer connection with appropriate configuration for separate PeerJS server
 const myPeer = new Peer(storedPeerId, {
-  host: window.location.hostname,
+  host: isLocalhost ? window.location.hostname : 'rexpeer.onrender.com',
   port: isLocalhost ? '3002' : '443', // Use 443 in production
-  path: '/peerjs', // Use the path we configured on the server
-  secure: isSecure,
+  path: '/', // Root path for dedicated PeerJS server
+  secure: true, // Always use secure connection for production PeerJS server
   debug: 3,
   config: {
     iceServers: [
