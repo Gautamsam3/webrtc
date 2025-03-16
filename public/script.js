@@ -39,7 +39,7 @@ const isLocalhost = window.location.hostname === 'localhost' ||
 
 // Create Peer connection with appropriate configuration for separate PeerJS server
 const myPeer = new Peer(storedPeerId, {
-  host: isLocalhost ? window.location.hostname : 'rexpeer.onrender.com',
+  host: isLocalhost ? window.location.hostname : PEER_HOST,
   port: isLocalhost ? '3002' : '443', // Use 443 in production
   path: '/', // Root path for dedicated PeerJS server
   secure: true, // Always use secure connection for production PeerJS server

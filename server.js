@@ -48,7 +48,9 @@ app.get('/:room', (req, res) => {
     return res.redirect('/')
   }
 
-  res.render('room', { roomId: roomName })
+  // Pass the PEER_HOST environment variable to the template
+  const PEER_HOST = process.env.PEER_HOST || 'localhost'
+  res.render('room', { roomId: roomName, peerHost: PEER_HOST })
 })
 
 // Store connected users by room

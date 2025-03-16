@@ -6,6 +6,7 @@ require('dotenv').config()
 const PEER_PORT = process.env.PEER_PORT || 3002
 const NODE_ENV = process.env.NODE_ENV || 'development'
 const HOST = process.env.HOST || 'localhost'
+const PEER_HOST = process.env.PEER_HOST || 'localhost'
 
 // Determine if we're in production
 const isProduction = NODE_ENV === 'production'
