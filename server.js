@@ -10,9 +10,11 @@ const PORT = process.env.PORT || 3000
 const PEER_PORT = process.env.PEER_PORT || 3002
 const NODE_ENV = process.env.NODE_ENV || 'development'
 const HOST = process.env.HOST || 'localhost'
+const PEER_HOST_URL = process.env.PEER_HOST_URL || 'localhost'
 
 // Determine if we're in production
 const isProduction = NODE_ENV === 'production'
+
 
 // Create appropriate server based on environment
 let server
@@ -48,9 +50,8 @@ app.get('/:room', (req, res) => {
     return res.redirect('/')
   }
 
-  // Pass the PEER_HOST environment variable to the template
-  const PEER_HOST = process.env.PEER_HOST || 'localhost'
-  res.render('room', { roomId: roomName, peerHost: PEER_HOST })
+  // Pass the PEER_HOST_URL environment variable to the template
+  res.render('room', { roomId: roomName, peerHost: PEER_HOST_URL })
 })
 
 // Store connected users by room
@@ -186,11 +187,5 @@ io.on('connection', socket => {
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT} with ${isProduction ? 'HTTP' : 'HTTPS'}`)
   console.log('To connect from another device, use the following URL:')
-
-  if (isProduction) {
-    console.log(`https://${HOST}`)
-  } else {
-    // For local development
-    console.log(`https://localhost:${PORT}`)
-  }
+  console.log(`https://${HOST}:${PORT}`)
 })

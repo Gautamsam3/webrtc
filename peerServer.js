@@ -5,7 +5,6 @@ require('dotenv').config()
 // Environment variables
 const PEER_PORT = process.env.PEER_PORT || 3002
 const NODE_ENV = process.env.NODE_ENV || 'development'
-const HOST = process.env.HOST || 'localhost'
 const PEER_HOST = process.env.PEER_HOST || 'localhost'
 
 // Determine if we're in production
@@ -79,9 +78,5 @@ peerServer.on('disconnect', (client) => {
 console.log(`PeerServer running on port ${PEER_PORT} with ${isProduction ? 'HTTP' : 'HTTPS'}`)
 console.log('To connect from another device, use the following URL:')
 
-if (isProduction) {
-  console.log(`https://${HOST}:${PEER_PORT}`)
-} else {
-  // For local development
-  console.log(`https://localhost:${PEER_PORT}`)
-}
+
+console.log(`${PEER_HOST}:${PEER_PORT}`)
